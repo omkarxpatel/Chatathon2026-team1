@@ -1,0 +1,13 @@
+# Deterministic layer
+numpy>=1.26
+pandas>=2.2
+scikit-learn>=1.5
+pyarrow>=16.0
+pydantic>=2.7
+
+# Demo UI
+streamlit>=1.35
+
+# Agent layer (optional -- only needed when config.USE_REAL_LLM = True).
+# The stub LLM runs the whole pipeline with no API key and no network.
+anthropic>=0.40

@@ -1,0 +1,30 @@
+# Committed on purpose: without headless, `streamlit run` stops on a first-run
+# "enter your email" prompt and never starts the server. Nobody wants to
+# discover that ten minutes before a demo.
+
+[server]
+headless = true          # skip the email prompt; do not auto-open a browser
+port = 8501
+
+[browser]
+gatherUsageStats = false
+
+# Palette is the validated default from the data-viz reference instance.
+# primaryColor matters more than it looks: it drives multiselect chips,
+# sliders and focus rings. Left at the Streamlit default they render bright
+# red, which reads as "error" on what is only a filter.
+[theme]
+base = "light"
+primaryColor = "#2a78d6"             # categorical slot 1, blue
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f7f7f5"
+textColor = "#0b0b0b"                # primary ink
+linkColor = "#1c5cab"
+borderColor = "#e1e0d9"              # hairline
+baseRadius = "medium"
+font = "system-ui, -apple-system, 'Segoe UI', sans-serif"
+headingFont = "system-ui, -apple-system, 'Segoe UI', sans-serif"
+
+[theme.sidebar]
+backgroundColor = "#f9f9f7"          # page plane
+borderColor = "#e1e0d9"
