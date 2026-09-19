@@ -15,6 +15,7 @@ pip install -r requirements.txt
 
 python run_generate.py        # build the synthetic cohort -> data/out/
 python smoke_test.py          # verify the pipeline + the five demo cases
+python -m unittest test_dashboard -v  # verify the review workflow
 streamlit run app/dashboard.py
 ```
 
@@ -24,6 +25,33 @@ Headless, if you want to see a trace without the UI:
 python run_pipeline.py                      # cohort summary
 python run_pipeline.py --show CUST-0001     # full trace for one customer
 ```
+
+---
+
+## Using the workspace
+
+The dashboard opens on **Review queue**, with suggested responses ordered by
+risk. Each customer shows their risk, a plain-language reason, and a recommended
+next step. Search by customer ID, reason, or action, or filter by risk level.
+
+- **Needs review** contains suggested responses that still need a person to review
+  them. Open one to see context alongside an editable draft. Save your edits, or
+  mark the response reviewed after the draft checks pass.
+- **High risk** includes every high-risk customer, including people who should
+  not be contacted. **On hold** explains why at-risk customers are being left alone.
+- **Reviewed** contains responses reviewed in this browser session. Download
+  a labeled demo draft to keep a copy, reopen it for editing, or move to the next
+  customer. Marking reviewed never sends a message.
+
+**All customers** includes the entire cohort. **How it works** explains the flow,
+links to the five demo cases, and keeps model evaluation available on demand.
+Customer details include expandable risk explanations, contact checks,
+recommendation reasoning, support history, and recorded signals.
+
+Drafts and review progress live only in Streamlit session state; reloading or
+closing the browser can reset them. Edited copy is rechecked for tone, length,
+discounts, and the existing response rules before it can be marked reviewed or
+downloaded. There is no send path, shared review database, or live integration.
 
 ---
 
@@ -154,7 +182,8 @@ the 46.7% base rate).
 
 > Figures are for the committed seed (`config.SEED = 20260919`). Regenerate with
 > a different seed and they move a few points — `run_pipeline.py` prints the
-> live values, and the dashboard sidebar shows them. Quote those, not these.
+> live values, and **How it works → Model details & evaluation** in the dashboard
+> shows them. Quote those, not these.
 
 **Why only six features when 29 are computed?** With ~94 churn events, fitting
 two dozen predictors gives under 4 events per variable against an accepted
@@ -260,6 +289,7 @@ Written so the team can split up. Files on different rows do not collide.
 | **Orchestration** | `pipeline.py` | everything |
 | **Design tokens** | `app/theme.py` | nothing — *safe to restyle freely* |
 | **UI** | `app/dashboard.py` | `pipeline`, `theme` |
+| **Review workflow** | `app/workflow.py` | `pipeline`, `guardrails` |
 
 `.streamlit/config.toml` is committed deliberately. Without `headless = true`,
 `streamlit run` stops on a first-run "enter your email" prompt and never starts
@@ -276,19 +306,13 @@ around them), and `agent/schemas.py` (so `stub_llm.py` and `diagnose.py` can be
 edited in parallel without conflicting), and `app/theme.py` (colour and
 spacing tokens, so restyling never means touching layout logic).
 
-### Colour is doing a job everywhere it appears
+### Interface hierarchy
 
-Palette is the validated default from the data-viz reference instance —
-checked with the colourblind-safety validator rather than eyeballed.
-
-- **Risk bands** use the fixed *status* palette (green / amber / red) and never
-  a categorical hue, so a band can never be mistaken for a series. Each one
-  carries its text label, so colour is never the only channel.
-- **The funnel** is one sequential blue ramp, light to dark, because the stages
-  are ordered. Every bar is directly labelled, so it has no x-axis.
-- **Attributions** are a diverging blue/red pair around a neutral zero —
-  correct for a signed quantity, and never a rainbow.
-- Exactly **one hero figure** per view.
+Warm neutral surfaces and a restrained green accent keep the workspace calm.
+Risk badges pair color with a percentage and text label. The queue keeps risk,
+reason, recommended response, and review status distinct. Detailed model and
+policy information is available in expandable sections instead of competing
+with the next action. The layout adapts to the available content width.
 
 ---
 
@@ -315,5 +339,6 @@ checked with the colourblind-safety validator rather than eyeballed.
 ## Deliberately not built
 
 No uplift modelling. No BTYD/survival. No gradient boosting. No auth, no
-database, no Docker, no deployment config. No tests beyond `smoke_test.py`. No
+database, no Docker, no deployment config. Pipeline checks live in `smoke_test.py`
+and review interaction tests in `test_dashboard.py`. No
 real API integration on the default path. **No send functionality of any kind.**

@@ -6,7 +6,7 @@ pyarrow>=16.0
 pydantic>=2.7
 
 # Demo UI
-streamlit>=1.35
+streamlit>=1.49
 
 # Agent layer (optional -- only needed when config.USE_REAL_LLM = True).
 # The stub LLM runs the whole pipeline with no API key and no network.

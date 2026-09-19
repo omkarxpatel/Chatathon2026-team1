@@ -1,183 +1,166 @@
-"""Design tokens and small HTML helpers for the dashboard.
+"""Visual language for a quiet, action-focused retention workspace."""
 
-Values are the validated default palette from the data-viz reference
-instance: categorical slots, a fixed status palette, and the chrome/ink
-roles. Kept in one file so the dashboard is written against roles rather
-than raw hex, and so swapping in a brand palette is one edit.
+from html import escape
 
-The status four are deliberately NOT themeable and never double as series
-colors -- a status hue must never impersonate a category.
-"""
-
-from __future__ import annotations
-
-# --- chrome & ink ---------------------------------------------------------
 SURFACE = "#ffffff"
-PLANE = "#f9f9f7"
-INK = "#0b0b0b"
-INK_2 = "#52514e"
-MUTED = "#898781"
-GRID = "#e1e0d9"
-RULE = "#c3c2b7"
-BORDER = "rgba(11,11,11,0.10)"
-
-# --- categorical (fixed order, never cycled) ------------------------------
-BLUE = "#2a78d6"
-ORANGE = "#eb6834"
-AQUA = "#1baf7a"
-VIOLET = "#4a3aa7"
-
-# --- sequential blue, light -> dark ---------------------------------------
-B150, B250, B350, B450, B550, B650 = (
-    "#b7d3f6", "#86b6ef", "#5598e7", "#2a78d6", "#1c5cab", "#104281",
-)
-
-# --- status (fixed; always paired with a text label, never colour alone) --
-GOOD = "#0ca30c"
-WARNING = "#fab219"
-SERIOUS = "#ec835a"
-CRITICAL = "#d03b3b"
-
-# Risk band -> (fill, tint, ink). Tints are for pill backgrounds; the ink
-# step is darkened so the label clears contrast on its own tint.
+PLANE = "#f6f7f4"
+INK = "#202b27"
+INK_2 = "#59655e"
+MUTED = "#68756d"
+GRID = "#e1e6df"
+GOOD = "#266854"
+WARNING = "#956515"
+CRITICAL = "#b7463c"
 BAND = {
-    "HIGH": (CRITICAL, "rgba(208,59,59,0.12)", "#992c2c"),
-    "MEDIUM": (WARNING, "rgba(250,178,25,0.18)", "#8a5d00"),
-    "LOW": (GOOD, "rgba(12,163,12,0.12)", "#0a7a0a"),
+    "HIGH": (CRITICAL, "#fbeeea", "#a03830"),
+    "MEDIUM": (WARNING, "#faf2df", "#80580e"),
+    "LOW": (GOOD, "#edf4ef", "#26604b"),
 }
-
-# Outcome -> pill colour. Acting is the exception, not the default, so it
-# is the only one that gets an accent.
-OUTCOME_TINT = {
-    "acted": (BLUE, "rgba(42,120,214,0.12)", "#1c5cab"),
-    "no action (agent)": (AQUA, "rgba(27,175,122,0.14)", "#0f7a55"),
-    "no action (low risk)": (MUTED, "rgba(137,135,129,0.14)", "#5c5a55"),
-    "suppressed (cooldown)": (MUTED, "rgba(137,135,129,0.14)", "#5c5a55"),
-    "suppressed (consent)": (MUTED, "rgba(137,135,129,0.14)", "#5c5a55"),
-    "suppressed (still stocked)": (MUTED, "rgba(137,135,129,0.14)", "#5c5a55"),
-    "blocked (guardrail)": (ORANGE, "rgba(235,104,52,0.14)", "#a8431d"),
-}
-
-FONT = "system-ui, -apple-system, 'Segoe UI', sans-serif"
-
-
-# --------------------------------------------------------------------------
-# HTML fragments
-# --------------------------------------------------------------------------
 
 
 def css() -> str:
-    """Injected once. Everything here is spacing, weight and hairlines --
-    no colour decisions live in the stylesheet that are not tokens above."""
     return f"""
 <style>
-  .block-container {{ padding-top: 2.4rem; padding-bottom: 3rem; max-width: 1500px; }}
-  #MainMenu, footer, [data-testid="stStatusWidget"] {{ visibility: hidden; }}
-  /* Nothing in the Streamlit toolbar is actionable during a demo. */
-  [data-testid="stAppDeployButton"],
-  [data-testid="stToolbarActions"] {{ display:none !important; }}
-
-  h1, h2, h3, h4 {{ letter-spacing: -0.015em; }}
-  h1 {{ font-size: 1.95rem !important; font-weight: 680 !important;
-        margin-bottom: .15rem !important; }}
-  h2 {{ font-size: 1.12rem !important; font-weight: 640 !important;
-        margin: .2rem 0 .6rem !important; }}
-  h3 {{ font-size: .95rem !important; font-weight: 640 !important; }}
-
-  /* Section rule: a labelled hairline, cheaper than a heading */
-  .sec {{ display:flex; align-items:center; gap:.7rem; margin:1.6rem 0 .8rem; }}
-  .sec span {{ font-size:.72rem; font-weight:650; letter-spacing:.09em;
-               text-transform:uppercase; color:{MUTED}; white-space:nowrap; }}
-  .sec:after {{ content:""; flex:1; height:1px; background:{GRID}; }}
-
-  /* Stat tile */
-  .tiles {{ display:grid; grid-template-columns:repeat(4,1fr); gap:.7rem; }}
-  .tile {{ background:{SURFACE}; border:1px solid {GRID}; border-radius:10px;
-           padding:.85rem 1rem; }}
-  .tile .lab {{ font-size:.74rem; font-weight:560; color:{INK_2};
-                letter-spacing:.01em; }}
-  .tile .val {{ font-size:1.85rem; font-weight:660; color:{INK};
-                line-height:1.15; margin-top:.15rem; }}
-  /* Word values are read, not scanned -- they do not want a numeral's size */
-  .tile .val.word {{ font-size:1.2rem; font-weight:640; line-height:1.3;
-                     margin-top:.3rem; }}
-  .tile .sub {{ font-size:.72rem; color:{MUTED}; margin-top:.1rem; }}
-
-  /* Hero: exactly one per view */
-  .hero {{ background:{PLANE}; border:1px solid {GRID}; border-radius:12px;
-           padding:1.15rem 1.35rem; display:flex; align-items:baseline; gap:1.1rem; }}
-  .hero .fig {{ font-size:3.1rem; font-weight:700; color:{INK}; line-height:1; }}
-  .hero .txt {{ font-size:.86rem; color:{INK_2}; line-height:1.45; }}
-  .hero .txt b {{ color:{INK}; font-weight:620; }}
-
-  /* Pills -- always carry their label, never colour alone */
-  .pill {{ display:inline-block; padding:.12rem .5rem; border-radius:999px;
-           font-size:.71rem; font-weight:620; letter-spacing:.02em;
-           white-space:nowrap; }}
-
-  /* Risk meter: fill carries severity, track is a lighter step */
-  .meter {{ height:9px; border-radius:999px; overflow:hidden; margin-top:.45rem; }}
-  .meter > div {{ height:100%; border-radius:999px; }}
-
-  /* Reasoning trace */
-  .step {{ display:flex; gap:.75rem; padding:.45rem 0; border-bottom:1px solid {GRID}; }}
-  .step .n {{ flex:0 0 1.35rem; height:1.35rem; border-radius:50%;
-              background:{B150}; color:{B650}; font-size:.7rem; font-weight:700;
-              display:flex; align-items:center; justify-content:center; }}
-  .step .t {{ font-size:.85rem; color:{INK_2}; line-height:1.5; }}
-  .step:last-child {{ border-bottom:none; }}
-
-  /* Gate check rows */
-  .chk {{ display:flex; gap:.6rem; align-items:flex-start; padding:.5rem .7rem;
-          border-radius:8px; margin-bottom:.35rem; border:1px solid {GRID}; }}
-  .chk .m {{ font-weight:700; font-size:.8rem; flex:0 0 auto; }}
-  .chk .b {{ font-size:.82rem; color:{INK_2}; line-height:1.45; }}
-  .chk .b b {{ color:{INK}; }}
-
-  /* Simulated-message card */
-  .sim {{ border:1px solid {GRID}; border-radius:10px; overflow:hidden; }}
-  .sim .bar {{ background:rgba(235,104,52,0.10); border-bottom:1px solid {GRID};
-               padding:.5rem .9rem; font-size:.74rem; font-weight:650;
-               color:#a8431d; letter-spacing:.03em; }}
-  .sim .subj {{ padding:.7rem .9rem .1rem; font-size:.9rem; font-weight:650; }}
-  .sim .body {{ padding:.35rem .9rem 1rem; font-size:.86rem; color:{INK_2};
-                line-height:1.62; white-space:pre-wrap; }}
-
-  /* Plain-English line under a technical stat name. The name stays --
-     the meaning just stops being a lookup for someone reading it cold. */
-  .gloss {{ font-size:.66rem; color:{MUTED}; line-height:1.32; margin:-.14rem 0 0; }}
-
-  .stTabs [data-baseweb="tab-list"] {{ gap:1.4rem; border-bottom:1px solid {GRID}; }}
-  .stTabs [data-baseweb="tab"] {{ padding:.35rem 0; font-size:.86rem; font-weight:560; }}
-  section[data-testid="stSidebar"] {{ border-right:1px solid {GRID}; }}
+  .stApp {{ background: {PLANE}; }}
+  .block-container {{ max-width: 1280px; padding: 2.6rem 3.2rem 3rem; container-type: inline-size; container-name: workspace; }}
+  #MainMenu, footer {{ visibility: hidden; }}
+  [data-testid="stAppDeployButton"], [data-testid="stToolbarActions"] {{ display: none; }}
+  [data-testid="stHeader"] {{ background: transparent; }}
+  h1, h2, h3 {{ color: {INK}; letter-spacing: -.04em; }}
+  h1 {{ font-size: 2.55rem !important; font-weight: 650 !important; line-height: 1.15 !important;
+        padding-bottom: .45rem !important; }}
+  h2 {{ font-size: 1.35rem !important; font-weight: 650 !important; padding-bottom: .4rem !important; }}
+  h3 {{ font-size: 1.06rem !important; font-weight: 620 !important; }}
+  p, label {{ line-height: 1.55; }}
+  [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color: {MUTED}; }}
+  [data-testid="stVerticalBlock"] {{ gap: .85rem; }}
+  [data-testid="stSidebar"] {{ background: #eef1eb; border-right: 1px solid {GRID}; }}
+  [data-testid="stSidebar"] > div:first-child {{ padding-top: 2.2rem; }}
+  [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {{ gap: .65rem; }}
+  [data-testid="stSidebar"] .stButton button {{ justify-content: flex-start; padding: .65rem .85rem; }}
+  [data-testid="stSidebar"] .stButton button[kind="secondary"] {{ background: transparent; border-color: transparent; }}
+  [data-testid="stSidebar"] .stButton button[kind="secondary"]:hover {{ background: #e3e9e0; }}
+  .brand {{ display: flex; align-items: center; gap: .65rem; font-size: 1.22rem;
+            font-weight: 730; letter-spacing: -.04em; color: {INK}; margin-bottom: .2rem; }}
+  .brand-mark {{ display: grid; place-items: center; width: 32px; height: 32px;
+                 background: #264f3d; color: #dff2b1; border-radius: 10px; font-size: 23px; }}
+  .brand-sub {{ color: {MUTED}; font-size: .76rem; margin: 0 0 2.3rem 2.65rem; }}
+  .eyebrow {{ font-size: .68rem; font-weight: 700; letter-spacing: .12em;
+              text-transform: uppercase; color: {MUTED}; margin: 1.1rem 0 .5rem; }}
+  .sidebar-note {{ margin-top: 2.4rem; border-top: 1px solid #d7ded3; padding-top: 1.1rem;
+                   font-size: .77rem; color: {INK_2}; line-height: 1.65; }}
+  .topline {{ display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+              margin-bottom: 1.65rem; font-size: .76rem; color: {MUTED}; scroll-margin-top: 4rem; }}
+  .topline strong {{ font-weight: 550; color: {INK_2}; }}
+  .lead {{ font-size: 1rem; color: {INK_2}; margin-bottom: 1.1rem; }}
+  .pill {{ display: inline-block; padding: .22rem .58rem; border-radius: 6px;
+           font-size: .7rem; line-height: 1.4; font-weight: 650; white-space: nowrap; }}
+  .stats {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin: .3rem 0 1.4rem; }}
+  .stat {{ background: {SURFACE}; border: 1px solid {GRID}; border-radius: 12px;
+           padding: 1.1rem 1.3rem; }}
+  .stat.featured {{ background: #e9efde; border-color: #dce5cb; }}
+  .stat-label {{ font-size: .79rem; font-weight: 550; color: {INK_2}; }}
+  .stat-value {{ font-size: 2.35rem; font-weight: 620; line-height: 1.3; letter-spacing: -.045em;
+                 color: {INK}; margin: .3rem 0; font-variant-numeric: tabular-nums; }}
+  .stat-sub {{ font-size: .73rem; color: {INK_2}; }}
+  .section-heading {{ display: flex; align-items: center; justify-content: space-between;
+                      gap: .5rem; margin: .3rem 0 .2rem; }}
+  .section-heading h2 {{ margin: 0; padding: 0 !important; }}
+  .section-heading > span {{ font-size: .74rem; color: {MUTED}; }}
+  [class*="st-key-customer-row-"] {{ background: {SURFACE}; border-radius: 12px; }}
+  [data-testid="stVerticalBlockBorderWrapper"] > div {{ border-radius: 12px; }}
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.customer-name),
+  [data-testid="stVerticalBlockBorderWrapper"]:has(.panel-label) {{ background: {SURFACE}; }}
+  .customer-name {{ font-size: .93rem; font-weight: 650; letter-spacing: -.015em; color: {INK}; }}
+  .customer-reason {{ margin-top: .28rem; font-size: .76rem; color: {INK_2}; line-height: 1.5; }}
+  .row-label {{ font-size: .64rem; text-transform: uppercase; letter-spacing: .07em;
+                color: {MUTED}; margin-bottom: .25rem; }}
+  .action-name {{ font-size: .82rem; font-weight: 550; color: {INK}; }}
+  .row-status {{ font-size: .72rem; color: {MUTED}; margin-top: .2rem; }}
+  .panel-label {{ font-size: .7rem; text-transform: uppercase; letter-spacing: .1em;
+                  color: {MUTED}; font-weight: 650; margin-bottom: .6rem; }}
+  .recommendation {{ background: #edf2e5; border: 1px solid #dde6d1; border-radius: 10px;
+                     padding: 1.2rem; margin: .3rem 0 1rem; }}
+  .recommendation h3 {{ margin: 0 0 .4rem; padding: 0; }}
+  .recommendation p {{ font-size: .85rem; color: {INK_2}; margin: 0; }}
+  .facts {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin: .7rem 0 1rem; }}
+  .fact {{ border-right: 1px solid {GRID}; padding-right: .6rem; }}
+  .fact:last-child {{ border-right: 0; }}
+  .fact-value {{ font-size: 1.1rem; font-weight: 640; margin: .25rem 0; }}
+  .fact-label {{ font-size: .72rem; color: {MUTED}; line-height: 1.4; }}
+  .check {{ display: flex; align-items: flex-start; gap: .65rem; padding: .7rem 0;
+            border-bottom: 1px solid {GRID}; font-size: .8rem; color: {INK_2}; }}
+  .check:last-child {{ border-bottom: 0; }}
+  .check strong {{ color: {INK}; font-weight: 600; }}
+  .check-mark {{ font-size: .65rem; font-weight: 700; padding-top: .15rem; min-width: 30px; }}
+  .empty {{ text-align: center; padding: 3rem 1rem; background: {SURFACE};
+            border: 1px dashed #cbd5c8; border-radius: 12px; }}
+  .empty h3 {{ font-size: 1.1rem !important; margin-bottom: .4rem; }}
+  .empty p {{ color: {MUTED}; font-size: .86rem; margin: 0; }}
+  .how-step {{ display: flex; gap: 1.1rem; padding: 1rem 0; }}
+  .how-number {{ flex: 0 0 34px; height: 34px; background: #e9efde; border-radius: 50%;
+                 display: grid; place-items: center; color: #355239; font-weight: 650; }}
+  .how-step h3 {{ margin: 0 0 .25rem; padding: 0; }}
+  .how-step p {{ margin: 0; font-size: .88rem; color: {INK_2}; }}
+  .stButton button, .stDownloadButton button, .stFormSubmitButton button {{ font-size: .8rem;
+        min-height: 2.45rem; border-radius: 8px; font-weight: 550; }}
+  button:focus-visible, input:focus-visible, textarea:focus-visible {{ outline: 2px solid #266854 !important;
+       outline-offset: 3px; }}
+  [data-testid="stRadio"] [role="radiogroup"] {{ gap: .45rem 1.3rem; }}
+  [data-testid="stRadio"] label p {{ font-size: .82rem; }}
+  [data-testid="stForm"] {{ background: {SURFACE}; border-color: {GRID}; border-radius: 12px; }}
+  [data-testid="stForm"] input, [data-testid="stForm"] textarea {{
+    border: 1px solid #d4ddd1; border-radius: 8px; background: #fcfdfb; padding: .75rem;
+  }}
+  [data-testid="stExpander"] {{ background: {SURFACE}; border-radius: 10px; }}
+  @container workspace (max-width: 760px) {{
+    .st-key-customer-detail [data-testid="stHorizontalBlock"]:has(.recommendation) > [data-testid="stColumn"] {{
+      width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important;
+    }}
+    [class*="st-key-customer-row-"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+      width: calc(50% - 1rem) !important; flex: 1 1 calc(50% - 1rem) !important; min-width: 0 !important;
+    }}
+    .st-key-queue-filters [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {{
+      width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important;
+    }}
+  }}
+  @media (max-width: 850px) {{
+    .block-container {{ padding: 2.2rem 1.2rem; }}
+    h1 {{ font-size: 2rem !important; }}
+    .stats {{ gap: .6rem; }}
+    .stat {{ padding: .8rem; }}
+    .stat-value {{ font-size: 1.85rem; }}
+    .topline {{ flex-wrap: wrap; }}
+  }}
+  @media (max-width: 520px) {{
+    .stats {{ grid-template-columns: 1fr; }}
+    .stat {{ display: grid; grid-template-columns: 1fr auto; align-items: center; }}
+    .stat-value {{ grid-column: 2; grid-row: 1 / 3; margin: 0; }}
+    .stat-sub {{ grid-column: 1; }}
+    .section-heading {{ align-items: flex-start; flex-direction: column; }}
+  }}
 </style>
 """
 
 
-def pill(text: str, tint: str, ink: str) -> str:
-    return f'<span class="pill" style="background:{tint};color:{ink}">{text}</span>'
+def pill(text: str, tint: str = "#e8eee3", ink: str = "#37533c") -> str:
+    return f'<span class="pill" style="background:{tint};color:{ink}">{escape(text)}</span>'
 
 
-def band_pill(band: str) -> str:
+def band_pill(band: str, probability: float | None = None) -> str:
     _, tint, ink = BAND[band]
-    return pill(band, tint, ink)
+    label = f"{band.title()} risk" if probability is None else f"{probability:.0%} · {band.title()}"
+    return pill(label, tint, ink)
 
 
-def outcome_pill(outcome: str) -> str:
-    _, tint, ink = OUTCOME_TINT.get(outcome, (MUTED, "rgba(137,135,129,0.14)", "#5c5a55"))
-    return pill(outcome, tint, ink)
+def stat(label: str, value: str, sub: str, featured: bool = False) -> str:
+    return (f'<div class="stat{" featured" if featured else ""}">'
+            f'<div class="stat-label">{escape(label)}</div>'
+            f'<div class="stat-value">{escape(value)}</div>'
+            f'<div class="stat-sub">{escape(sub)}</div></div>')
 
 
-def tile(label: str, value: str, sub: str = "", word: bool = False) -> str:
-    """`word=True` for text values -- a phrase set at numeral size shouts."""
-    cls = "val word" if word else "val"
-    return (f'<div class="tile"><div class="lab">{label}</div>'
-            f'<div class="{cls}">{value}</div>'
-            f'<div class="sub">{sub}</div></div>')
-
-
-def meter(probability: float, band: str) -> str:
-    fill, tint, _ = BAND[band]
-    pct = max(2.0, min(100.0, probability * 100))
-    return (f'<div class="meter" style="background:{tint}">'
-            f'<div style="width:{pct:.1f}%;background:{fill}"></div></div>')
+def check(label: str, detail: str, passed: bool) -> str:
+    color, mark = (GOOD, "PASS") if passed else (WARNING, "HOLD")
+    return (f'<div class="check"><span class="check-mark" style="color:{color}">{mark}</span>'
+            f'<div><strong>{escape(label)}</strong><br>{escape(detail)}</div></div>')

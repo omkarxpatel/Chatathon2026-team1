@@ -9,22 +9,20 @@ port = 8501
 [browser]
 gatherUsageStats = false
 
-# Palette is the validated default from the data-viz reference instance.
-# primaryColor matters more than it looks: it drives multiselect chips,
-# sliders and focus rings. Left at the Streamlit default they render bright
-# red, which reads as "error" on what is only a filter.
+# A restrained green accent for navigation and actions. Risk colors are
+# reserved for labeled risk badges in app/theme.py.
 [theme]
 base = "light"
-primaryColor = "#2a78d6"             # categorical slot 1, blue
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f7f7f5"
-textColor = "#0b0b0b"                # primary ink
-linkColor = "#1c5cab"
-borderColor = "#e1e0d9"              # hairline
+primaryColor = "#266854"
+backgroundColor = "#f6f7f4"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#202b27"
+linkColor = "#266854"
+borderColor = "#e1e6df"
 baseRadius = "medium"
 font = "system-ui, -apple-system, 'Segoe UI', sans-serif"
 headingFont = "system-ui, -apple-system, 'Segoe UI', sans-serif"
 
 [theme.sidebar]
-backgroundColor = "#f9f9f7"          # page plane
-borderColor = "#e1e0d9"
+backgroundColor = "#eef1eb"
+borderColor = "#e1e6df"
