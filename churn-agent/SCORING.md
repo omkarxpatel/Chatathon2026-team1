@@ -117,6 +117,110 @@ Same cut points Klaviyo publishes, on purpose, so we're speaking their language:
 
 ---
 
+## Step 3b — Score becomes a *direction*
+
+A band is a snapshot. It cannot tell these two customers apart:
+
+| | six months ago | today | band |
+|---|---|---|---|
+| Customer A | 55% | 55% | MEDIUM |
+| Customer B | 22% | 55% | MEDIUM |
+
+A has always been a slow, lumpy reorderer and is behaving exactly as they
+always have. B is falling off a cliff and has not landed yet. Same band,
+same queue position, opposite situations.
+
+`features/trajectory.py` fixes that by **rewinding the clock**. It rebuilds
+each customer's feature vector at 13 dates spanning the last 180 days and runs
+**the same already-fitted model** over each one, producing a risk curve. The
+recency-weighted slope of that curve is `momentum`, in risk points per 100 days.
+
+```
+CLIMBING     >= +5 pts/100d vs cohort    the shape past churners showed
+STABLE       between                     wherever they are, they are parked
+RECOVERING   <= -5 pts/100d vs cohort    coming back
+```
+
+### Why this is not just more features
+
+The obvious version of this is to compute trend features and feed them to the
+scorer. We measured it. It makes the model **worse**:
+
+| Model | PR-AUC (5-fold, 5 seeds) |
+|---|---|
+| snapshot only — what ships | **0.755** |
+| snapshot + 7 trend features | 0.742 |
+| trend features only | 0.697 |
+
+Same arithmetic as ["Why only six features?"](#why-only-six-features): 94 churn
+events cannot support 13 predictors. So the trajectory is a **parallel signal**,
+not a model input. Nothing about the risk number changes.
+
+### Why rewinding is not leakage
+
+`store.events_for(cid, as_of)` truncates the event streams before handing them
+over. A rewound snapshot physically cannot see past its own cutoff — the same
+firewall that protects the live features, reused. `smoke_test.py` asserts it
+directly.
+
+### The bias we had to remove
+
+`order_count_lifetime` is cumulative, so a snapshot from 180 days ago always
+shows fewer orders — cohort mean 0.90 then against 2.96 now. Its coefficient is
+negative, so **every** rewound snapshot scores as riskier than it deserves and
+every curve tilts downward. Cohort median slope: −4.7 pts/100d.
+
+That is an artefact of looking backwards, not a cohort that is collectively
+recovering. Since every customer sits on the same calendar grid the bias is
+common-mode, so subtracting the cohort median removes it exactly. States are
+classified on that centred number.
+
+### Does it actually find anything?
+
+Out of fold — the model never sees the label of the customer it scores —
+5-fold, averaged over 5 seeds, base rate 47%:
+
+| Group | Churn rate |
+|---|---|
+| CLIMBING | **76%** |
+| RECOVERING | 30% |
+| MEDIUM band, climbing | **64%** |
+| MEDIUM band, not climbing | 36% |
+
+And the case the feature exists for — customers **below** the HIGH band, who
+nothing else in the workspace surfaces:
+
+| Group | n | Churn rate |
+|---|---|---|
+| below HIGH, climbing ("Drifting") | ~38 | **61.5% ± 5.7** |
+| below HIGH, not climbing | ~117 | 30.0% |
+
+**2.05× lift over the customers sitting beside them in the queue**, stable
+across five seeds.
+
+### What it does NOT do
+
+A climbing trajectory **does not open the policy gate**. It is a reason to look,
+never consent to contact — letting a trend override the gate would email people
+who still have a full tub in the cupboard. `drifting` and `early_warning` are
+surfaced in the UI and change nothing about who is eligible. `smoke_test.py`
+asserts the gate is unmoved.
+
+### Honest caveats
+
+- **It is correlated with the score** (r ≈ 0.63–0.69). It is a second read on
+  the same evidence, not independent information.
+- **No signal in the LOW band.** Climbing LOW-band customers churn at about the
+  same rate as flat ones. The lift is real in MEDIUM and marginal in HIGH.
+- **The oldest points are the least trustworthy.** A customer with one order
+  180 days ago genuinely looked maximal-risk then; 2 of 200 curves open above
+  95%. The UI quotes the slope and today's risk, never a then-and-now pair.
+- **Curves are sawtoothed by design.** `reorder_gap_ratio` resets when an order
+  lands. A healthy reorderer oscillates; the recency-weighted slope is what
+  separates that from a straight climb.
+
+---
+
 ## Step 4 — How a customer actually gets flagged
 
 This is the part people get wrong. **A high score does not mean we contact
@@ -253,6 +357,7 @@ The important ones:
 |---|---|
 | A threshold, cooldown, band cut point, seed | `config.py` — *nothing else should hardcode these* |
 | What counts as a feature | `features/extract.py` |
+| The lookback, grid, or drift thresholds | `config.py`, then `features/trajectory.py` |
 | The model itself | `scoring/logistic.py` (implement `RiskScorer` to add a new one) |
 | Who gets suppressed | `agent/policy.py` |
 | How causes are diagnosed | `agent/stub_llm.py` |
@@ -270,3 +375,5 @@ The important ones:
 3. **The model handles uncertainty; the gate handles certainty.** Anything you
    can *compute* (do they still have product?) belongs in the gate. Anything you
    have to *estimate* belongs in the model.
+4. **The score says how bad; the trajectory says which way.** They are separate
+   on purpose — bolting the trend onto the model measurably made it worse.

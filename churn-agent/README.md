@@ -1,4 +1,4 @@
-# Churn agent — DTC sports nutrition
+# Cadence — DTC sports nutrition
 
 Spot churn, take a helpful first action. Built for Chatathon 2026, Klaviyo track.
 
@@ -22,8 +22,8 @@ streamlit run app/dashboard.py
 Headless, if you want to see a trace without the UI:
 
 ```bash
-python run_pipeline.py                      # cohort summary
-python run_pipeline.py --show CUST-0001     # full trace for one customer
+python run_pipeline.py                      # cohort summary + the drifting list
+python run_pipeline.py --show CUST-0001     # full trace, risk curve included
 ```
 
 ---
@@ -39,6 +39,8 @@ next step. Search by customer ID, reason, or action, or filter by risk level.
   mark the response reviewed after the draft checks pass.
 - **High risk** includes every high-risk customer, including people who should
   not be contacted. **On hold** explains why at-risk customers are being left alone.
+- **Drifting** holds customers who are not high risk yet but whose risk is
+  climbing the way it climbed for people who left. Nothing else surfaces them.
 - **Reviewed** contains responses reviewed in this browser session. Download
   a labeled demo draft to keep a copy, reopen it for editing, or move to the next
   customer. Marking reviewed never sends a message.
@@ -62,6 +64,9 @@ Two layers, hard boundary, and the boundary is visible in `pipeline.py`.
 ```
   events  ──▶  features/extract.py  ──▶  scoring/logistic.py  ──▶  agent/policy.py
                                               │                          │
+                                              ├──▶ features/trajectory.py
+                                              │    the SAME model, rescored
+                                              │    at 13 earlier dates.
               DETERMINISTIC LAYER ────────────┴──────────────────────────┘
               pure python + sklearn. no LLM. produces a calibrated
               probability and exact per-feature attributions.
@@ -208,6 +213,58 @@ verifies this reconstructs to within 1.7e-14. No SHAP needed.
 
 ---
 
+## Direction of travel
+
+The score answers *how bad*. It cannot answer *which way*, and those are
+different questions:
+
+| | 6 months ago | today | band |
+|---|---|---|---|
+| Customer A | 55% | 55% | MEDIUM |
+| Customer B | 22% | 55% | MEDIUM |
+
+A has always reordered slowly and is fine. B is falling off a cliff and has not
+landed yet. Same band, same queue position, opposite situations.
+
+`features/trajectory.py` **rewinds the clock**: it rebuilds each customer's
+feature vector at 13 dates across 180 days and runs *the same fitted model* over
+each one. That gives a risk curve, and its recency-weighted slope is `momentum`.
+
+**No second model, and no trend features in the scorer.** We measured that
+version and it is worse — PR-AUC 0.755 → 0.742. Ninety-four churn events cannot
+carry thirteen predictors, the same arithmetic that keeps the feature list at
+six. The trajectory is a parallel signal; the risk number is untouched.
+
+Out of fold, 5 seeds, against a 47% base rate:
+
+| Group | Churn rate |
+|---|---|
+| CLIMBING | **76%** |
+| RECOVERING | 30% |
+| **Below HIGH band and climbing** — the "Drifting" queue | **61.5% ± 5.7** |
+| Below HIGH band, not climbing | 30.0% |
+
+**2.05×** over the customers sitting beside them, none of whom the workspace
+surfaces today.
+
+Two things make this honest rather than a demo trick:
+
+- **Rewinding cannot leak.** `store.events_for(cid, as_of)` truncates, so a
+  rewound snapshot physically cannot see past its own cutoff. Same firewall as
+  the live features, reused. `smoke_test.py` asserts it.
+- **The common-mode bias is removed.** `order_count_lifetime` is cumulative, so
+  every rewound snapshot looks riskier than it deserves and every curve tilts
+  down by roughly 4.7 pts/100d. That is an artefact of looking backwards, not a
+  recovering cohort, so momentum is centred on the cohort median before anything
+  is classified.
+
+**A climbing trajectory does not open the policy gate.** It is a reason to look,
+never consent to contact. Letting a trend override the gate would email people
+with a full tub in the cupboard — the exact failure `CUST-0002` exists to
+prevent. Caveats and the full table are in `SCORING.md`.
+
+---
+
 ## The policy gate
 
 Deterministic, runs **before** the agent, cheapest and most absolute check
@@ -278,6 +335,7 @@ Written so the team can split up. Files on different rows do not collide.
 | **Generator** | `data/generator.py` | all of the above |
 | **Event access** | `data/store.py` | `config` |
 | **Features** | `features/extract.py` | `store`, `catalog` |
+| **Trajectory** | `features/trajectory.py` | `extract`, `store` |
 | **Scoring** | `scoring/base.py`, `scoring/logistic.py` | `features` |
 | **Policy gate** | `agent/policy.py` | `scoring`, `store` |
 | **Tools** | `agent/tools.py` | `store`, `policy` |
@@ -333,6 +391,9 @@ with the next action. The layout adapts to the available content width.
   `config.CALIBRATE` is a stub; isotonic would need more than 200 points.
 - **The stub is rules, not intelligence.** It is faithful about *shape*, not
   about judgement. Flip `USE_REAL_LLM` to see the difference.
+- **The trajectory is correlated with the score** (r ≈ 0.63–0.69), not
+  independent evidence — it is a second read on the same signals. It finds
+  nothing in the LOW band; the lift is real in MEDIUM and marginal in HIGH.
 - **The label is still a heuristic**, personalised window or not. A customer who
   buys elsewhere for 100 days and returns on day 200 is labelled churned.
 

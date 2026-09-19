@@ -23,6 +23,8 @@ from agent.policy import GateOutcome, PolicyDecision, evaluate as evaluate_polic
 from agent.schemas import Action, AgentDiagnosis
 from data.store import EventStore
 from features.extract import FEATURE_NAMES, extract_frame
+from features.trajectory import Trajectory, TrajectoryState
+from features.trajectory import build as build_trajectories
 from scoring.base import FitReport, RiskResult
 from scoring.logistic import LogisticRiskScorer
 
@@ -35,6 +37,7 @@ class CustomerResult:
     archetype: str | None
     features: dict[str, float]
     risk: RiskResult
+    trajectory: Trajectory                     # direction of travel, not level
     policy: PolicyDecision
     diagnosis: AgentDiagnosis | None          # None when the gate stopped it
     guardrails: guardrails.GuardrailReport | None
@@ -45,6 +48,28 @@ class CustomerResult:
         if self.guardrails is not None:
             return self.guardrails.final_action
         return Action.NO_ACTION
+
+    @property
+    def drifting(self) -> bool:
+        """On the path past churners took, whatever today's score says.
+
+        Deliberately NOT part of the policy gate. The gate decides who we
+        are allowed to contact; this decides who is worth a second look.
+        Letting a trend open the gate would contact people on a rising
+        curve who still have product in the cupboard.
+        """
+        return self.trajectory.state is TrajectoryState.CLIMBING
+
+    @property
+    def early_warning(self) -> bool:
+        """Climbing, but not yet scoring high enough to be worked.
+
+        The customers this feature exists for. Nothing in the queue
+        surfaces them today, and out of fold they churn at 62% against
+        30% for the non-drifting peers they sit beside -- 2.05x, stable
+        across five seeds. See SCORING.md.
+        """
+        return self.drifting and self.risk.band.value != "HIGH"
 
     @property
     def outcome_label(self) -> str:
@@ -131,6 +156,8 @@ class CohortRun:
                 "action": r.final_action.value,
                 "days_supply_left": round(r.features["days_of_supply_remaining"]),
                 "gap_vs_median": round(r.features["reorder_gap_ratio"], 2),
+                "trend": r.trajectory.state.value,
+                "momentum": round(r.trajectory.momentum, 1),
                 "archetype": r.archetype or "",
                 "churned": r.churn_label,
             }
@@ -153,6 +180,10 @@ def run_cohort(store: EventStore | None = None, as_of: date | None = None) -> Co
     scorer = LogisticRiskScorer()
     fit = scorer.fit(X, y)
     risks = {r.customer_id: r for r in scorer.score_batch(X)}
+
+    # Same model, rescored at a grid of earlier dates -> a risk CURVE per
+    # customer. Answers "which direction", which the snapshot cannot.
+    trajectories = build_trajectories(store, scorer, as_of)
 
     events = {cid: store.events_for(cid, as_of) for cid in X.index}
     features = {cid: X.loc[cid].to_dict() for cid in X.index}
@@ -180,6 +211,7 @@ def run_cohort(store: EventStore | None = None, as_of: date | None = None) -> Co
             archetype=store.archetype(str(cid)),
             features=features[cid],
             risk=risks[cid],
+            trajectory=trajectories[str(cid)],
             policy=policies[cid],
             diagnosis=diagnosis,
             guardrails=report,

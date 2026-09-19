@@ -140,6 +140,9 @@ check(not offenders, "no mail or messaging client is imported anywhere",
 # ==========================================================================
 print("\n[3] Pipeline -- does the whole thing run, and do the demos still hold?")
 
+import pandas as pd  # noqa: E402
+
+from agent.policy import evaluate as evaluate_policy  # noqa: E402
 from agent.schemas import Action, Cause  # noqa: E402
 from pipeline import run_cohort  # noqa: E402
 
@@ -199,6 +202,93 @@ for cid, (archetype, cause, action, gate) in EXPECTED.items():
         f"action={r.final_action.value}"
     )
     check(ok, f"{cid} ({archetype}) behaves as the demo claims", got)
+
+# ==========================================================================
+# 3b. Risk trajectory
+# ==========================================================================
+# The trajectory rewinds the clock. If that rewind could see forward, the
+# whole feature would be a very convincing lie, so the checks below are
+# about temporal honesty first and arithmetic second.
+print("\n[3b] Risk trajectory -- is the rewind honest?")
+
+from datetime import timedelta  # noqa: E402
+
+import numpy as np  # noqa: E402
+
+from features.trajectory import (  # noqa: E402
+    TrajectoryState, _grid, momentum_of, state_for,
+)
+
+trajectories = [r.trajectory for r in run.results]
+
+check(all(t.offsets == tuple(_grid()) for t in trajectories),
+      f"every customer is measured on the same {len(_grid())}-point grid")
+check(all(t.offsets[-1] == 0 for t in trajectories),
+      "every curve ends at the as-of date")
+check(all(0.0 <= v <= 1.0 for t in trajectories for v in t.curve),
+      "every point on every curve is a probability")
+check(all(abs(t.curve[-1] - r.risk.probability) < 1e-9
+          for r, t in zip(run.results, trajectories)),
+      "the curve's last point IS the headline risk score",
+      "the trajectory and the score disagree about today")
+
+# THE IMPORTANT ONE. A rewound snapshot must be reproducible from the
+# truncated event store alone. If extract_frame at an earlier as_of could
+# see later events, this would differ.
+from data.store import EventStore as _Store  # noqa: E402
+from features.extract import extract_frame as _extract  # noqa: E402
+
+_store = _Store.load()
+_probe = run.results[0].customer_id
+_back = run.as_of - timedelta(days=cfg.TRAJECTORY_LOOKBACK_DAYS)
+_rewound = _extract(_store, customer_ids=[_probe], as_of=_back)
+_events = _store.events_for(_probe, _back)
+check(len(_events.orders) == 0 or _events.orders["ts"].max() < pd.Timestamp(_back),
+      f"rewinding to {_back} exposes no event at or after that date")
+check(_rewound.loc[_probe, "tenure_days"]
+      <= run.results[0].features["tenure_days"] - cfg.TRAJECTORY_LOOKBACK_DAYS + 1e-6,
+      "a rewound snapshot really is older (tenure went backwards)")
+
+# Momentum: a straight line of known slope must come back as that slope.
+_offs = np.array([100.0, 50.0, 0.0])
+_flat = momentum_of(np.array([[0.4, 0.4, 0.4]]), _offs)[0]
+_rising = momentum_of(np.array([[0.2, 0.3, 0.4]]), _offs)[0]
+check(abs(_flat) < 1e-9, "a flat curve has zero momentum", f"got {_flat}")
+check(abs(_rising - 20.0) < 1e-6,
+      "a curve rising 20 points per 100 days reports +20", f"got {_rising:.4f}")
+check(momentum_of(np.array([[0.4, 0.3, 0.2]]), _offs)[0] < 0,
+      "a falling curve reports negative momentum")
+
+# Centring is what makes the state meaningful -- see the common-mode drift
+# note in features/trajectory.py. The median customer must be STABLE.
+_rel = np.array([t.relative_momentum for t in trajectories])
+check(abs(float(np.median(_rel))) < 1e-9,
+      "momentum is centred: the median customer sits at zero",
+      f"median relative momentum is {np.median(_rel):+.3f}")
+check(state_for(float(np.median(_rel))) is TrajectoryState.STABLE,
+      "the median customer is therefore STABLE, not drifting")
+check(all(t.state is state_for(t.relative_momentum) for t in trajectories),
+      "every state matches its own centred momentum")
+
+# The claim the feature is making. Drifting customers must actually churn
+# more than the non-drifting customers sitting beside them, or the queue
+# tab is decoration. (In-sample on the committed seed -- the honest
+# out-of-fold figure is in SCORING.md.)
+_early = [r for r in run.results if r.early_warning]
+_peers = [r for r in run.results
+          if r.risk.band.value != "HIGH" and not r.drifting]
+_early_rate = sum(r.churn_label for r in _early) / max(len(_early), 1)
+_peer_rate = sum(r.churn_label for r in _peers) / max(len(_peers), 1)
+check(_early and _early_rate > _peer_rate,
+      f"drifting customers below HIGH churn more than their peers "
+      f"({_early_rate:.0%} of {len(_early)} vs {_peer_rate:.0%} of {len(_peers)})",
+      f"early warning {_early_rate:.0%} vs peers {_peer_rate:.0%} -- no signal")
+
+# The gate must NOT have moved. A trend is a reason to look, not consent.
+check(all(r.policy.eligible == evaluate_policy(
+              r.risk, r.features, _store.events_for(r.customer_id, run.as_of)
+          ).eligible for r in run.results[:25]),
+      "the trajectory did not change who the gate lets through")
 
 # Never discount without a price diagnosis -- the headline guardrail.
 bad_discounts = [

@@ -15,6 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from enum import Enum
 
+import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field
 
@@ -108,3 +109,13 @@ class RiskScorer(ABC):
 
     def score_batch(self, X: pd.DataFrame) -> list[RiskResult]:
         return [self.score(str(cid), row.to_dict()) for cid, row in X.iterrows()]
+
+    def probabilities(self, X: pd.DataFrame) -> np.ndarray:
+        """Just the probabilities, no attributions.
+
+        features/trajectory.py rescores the whole cohort at a dozen
+        rewound dates and throws the attributions away. Going through
+        score_batch() would build several thousand single-row DataFrames
+        to do it. Implementations with a vectorised path should override.
+        """
+        return np.array([r.probability for r in self.score_batch(X)])

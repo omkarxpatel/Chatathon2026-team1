@@ -140,3 +140,35 @@ ARCHETYPE_IDS = {
     "CUST-0004": "cooldown_suppressed",    # at risk, but contacted 6 days ago
     "CUST-0005": "legitimate_stop",        # injury, happy customer, leave alone
 }
+
+# --------------------------------------------------------------------------
+# Risk trajectory (features/trajectory.py)
+# --------------------------------------------------------------------------
+# The risk score is a snapshot. Two customers at 0.55 are not the same
+# customer if one has sat at 0.55 for six months and the other was at 0.25
+# in the spring. The trajectory answers "which direction, and how fast".
+#
+# We rebuild each customer's feature vector at a grid of earlier dates and
+# run the SAME fitted model over each one, giving a risk curve. Rewinding is
+# leak-free by construction: store.events_for(cid, as_of) truncates, so a
+# rewound snapshot physically cannot see past its own cutoff.
+TRAJECTORY_LOOKBACK_DAYS = 180   # how far back the curve goes
+TRAJECTORY_STEP_DAYS = 15        # grid spacing -> 13 points over 180 days
+TRAJECTORY_HALFLIFE_DAYS = 60    # recency weighting; last few months dominate
+
+# Momentum is measured in RISK PERCENTAGE POINTS PER 100 DAYS, RELATIVE TO
+# THE COHORT MEDIAN. The centering is not cosmetic -- see the "common-mode
+# drift" note in features/trajectory.py. Briefly: order_count_lifetime is
+# cumulative, so an older snapshot always shows fewer orders, which inflates
+# its risk and tilts every curve downward by a constant. Centering cancels
+# a bias that is an artefact of rewinding rather than a fact about anyone.
+#
+# +/-5 points per 100 days splits the committed seed's cohort roughly
+# 78 / 51 / 71 into climbing / steady / recovering.
+TRAJECTORY_CLIMBING_MIN = 5.0     # >= this -> CLIMBING
+TRAJECTORY_RECOVERING_MAX = -5.0  # <= this -> RECOVERING
+
+# A signal has to move by more than this (in standard deviations across the
+# cohort, over the whole lookback) before we name it in the UI. Stops the
+# panel from reporting noise as a trend.
+TRAJECTORY_DRIFT_MIN_Z = 0.25

@@ -107,6 +107,10 @@ class LogisticRiskScorer(RiskScorer):
         clf: LogisticRegression = self.pipeline.named_steps["clf"]
         return dict(zip(self.feature_names, clf.coef_[0]))
 
+    def probabilities(self, X: pd.DataFrame) -> np.ndarray:
+        """Vectorised path for the trajectory rescan -- one call, not N."""
+        return self.pipeline.predict_proba(X[self.feature_names])[:, 1]
+
     def score(self, customer_id: str, features: dict[str, float]) -> RiskResult:
         row = pd.DataFrame([[features[f] for f in self.feature_names]],
                            columns=self.feature_names)

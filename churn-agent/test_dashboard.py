@@ -39,6 +39,27 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.app.text_input(key="customer_search").value, "CUST-0004")
         self.assertEqual(len([b for b in self.app.button if b.key and b.key.startswith("open-")]), 1)
 
+    def test_drifting_queue_surfaces_customers_risk_alone_misses(self):
+        """The point of the Drifting view: nobody in it is HIGH risk."""
+        self.app.radio(key="queue_scope").set_value("Drifting").run()
+        self.assertFalse(self.app.exception)
+        keys = [b.key for b in self.app.button if b.key and b.key.startswith("open-")]
+        self.assertTrue(keys, "the drifting queue is empty")
+
+        from pipeline import run_cohort
+        results = run_cohort().by_id()
+        for key in keys:
+            r = results[key.removeprefix("open-")]
+            self.assertNotEqual(r.risk.band.value, "HIGH")
+            self.assertTrue(r.drifting)
+
+        # Opening one shows the curve and does not offer a send path.
+        self.app.button(key=keys[0]).click().run()
+        self.assertFalse(self.app.exception)
+        body = " ".join(m.value for m in self.app.markdown)
+        self.assertIn("<svg", body)
+        self.assertIn("Risk climbing", body)
+
     def test_review_removes_from_pending_and_can_reopen(self):
         self.app.button(key="open-CUST-0037").click().run()
         self.click("Mark reviewed")

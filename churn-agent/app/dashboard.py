@@ -24,7 +24,7 @@ from data.store import EventStore
 from features.extract import FEATURE_LABELS, MODEL_FEATURES
 from pipeline import CohortRun, CustomerResult, run_cohort
 
-st.set_page_config(page_title="Churn agent · Retention workspace", page_icon="🌱",
+st.set_page_config(page_title="Cadence · Retention workspace", page_icon="🌱",
                    layout="wide", initial_sidebar_state="auto")
 st.markdown(T.css(), unsafe_allow_html=True)
 
@@ -98,9 +98,13 @@ def review_status(r: CustomerResult) -> str:
 pending = [r for r in run.results if can_review(r) and not reviewed(r)]
 high_risk = [r for r in run.results if r.risk.band.value == "HIGH"]
 on_hold = [r for r in run.results if not can_review(r) and r.risk.band.value != "LOW"]
+# Not high risk yet, but moving the way customers who left moved. Nothing
+# else in this workspace surfaces them.
+early_warning = sorted([r for r in run.results if r.early_warning],
+                       key=lambda r: -r.trajectory.relative_momentum)
 
 with st.sidebar:
-    html('<div class="brand"><span class="brand-mark" aria-hidden="true">↗</span>Churn agent</div>'
+    html('<div class="brand"><span class="brand-mark" aria-hidden="true">↗</span>Cadence</div>'
          '<div class="brand-sub">Better timing. Better retention.</div>'
          '<div class="eyebrow">Workspace</div>')
     for page, icon in [("Review queue", ":material/inbox:"),
@@ -125,6 +129,7 @@ def render_stats() -> None:
          + T.stat("Needs your review", str(len(pending)), "Suggested responses to work through", True)
          + T.stat("High-risk customers", str(len(high_risk)), f"{ready_high} still need a response reviewed")
          + T.stat("Outreach on hold", str(len(on_hold)), "At-risk customers best left alone for now")
+         + T.stat("Drifting quietly", str(len(early_warning)), "Not high risk yet, but trending that way")
          + '</div>')
 
 
@@ -139,7 +144,7 @@ def render_queue() -> None:
     if all_customers:
         scope = "All customers"
     else:
-        scope = st.radio("Queue view", ["Needs review", "High risk", "On hold", "Reviewed"],
+        scope = st.radio("Queue view", ["Needs review", "High risk", "Drifting", "On hold", "Reviewed"],
                          horizontal=True, label_visibility="collapsed", key="queue_scope", on_change=reset_paging)
     with st.container(key="queue-filters"):
         search_col, filter_col = st.columns([3, 1.4])
@@ -147,7 +152,8 @@ def render_queue() -> None:
                                     label_visibility="collapsed", key="customer_search", on_change=reset_paging)
     band = filter_col.selectbox("Filter by risk", ["All risk levels", "High", "Medium", "Low"],
                                label_visibility="collapsed", key="risk_filter", on_change=reset_paging)
-    scopes = {"Needs review": pending, "High risk": high_risk, "On hold": on_hold,
+    scopes = {"Needs review": pending, "High risk": high_risk, "Drifting": early_warning,
+              "On hold": on_hold,
               "Reviewed": [r for r in run.results if reviewed(r)], "All customers": run.results}
     view = scopes[scope]
     if band != "All risk levels":
@@ -158,6 +164,7 @@ def render_queue() -> None:
     descriptions = {
         "Needs review": "Review a draft, make it your own, and mark it reviewed. Nothing is sent.",
         "High risk": "High risk does not always mean contact them. Check the recommended next step.",
+        "Drifting": "Their risk is still below high, but it is climbing the way it climbed for customers who left. Worth a look before it becomes urgent.",
         "On hold": "Outreach is paused for a reason. Open a customer to understand why.",
         "Reviewed": "Responses you have reviewed in this session. These have not been sent.",
         "All customers": "Open any customer to see the evidence and contact guidance.",
@@ -169,6 +176,7 @@ def render_queue() -> None:
             title, message = {
                 "Needs review": ("You're all caught up", "Every suggested response has been reviewed. Explore high-risk customers for more context."),
                 "Reviewed": ("Your reviewed responses will appear here", "Open a customer in Needs review and mark their response reviewed."),
+                "Drifting": ("Nobody is quietly drifting right now", "Every customer whose risk is climbing is already in the high-risk view."),
             }.get(scope, ("Nothing here right now", "Choose another view to explore your customers."))
         html(f'<div class="empty"><h3>{escape(title)}</h3><p>{escape(message)}</p></div>')
         return
@@ -183,7 +191,11 @@ def render_queue() -> None:
                 html(f'<div class="customer-name">{escape(r.customer_id)}</div>'
                      f'<div class="customer-reason">{escape(reason(r))}</div>')
             with risk:
-                html('<div class="row-label">Churn risk</div>' + T.band_pill(r.risk.band.value, r.risk.probability))
+                html('<div class="row-label">Churn risk</div>'
+                     + T.band_pill(r.risk.band.value, r.risk.probability)
+                     + ('<div style="margin-top:.35rem">'
+                        + T.trend_pill(r.trajectory.state.value) + '</div>'
+                        if r.drifting else ''))
             with action:
                 html(f'<div class="action-name">{escape(next_step(r))}</div>'
                      f'<div class="row-status">{escape(review_status(r))}</div>')
@@ -205,6 +217,7 @@ def render_evidence(r: CustomerResult) -> None:
          f'<div class="fact"><div class="fact-label">Last delivery</div><div class="fact-value">{f["days_since_last_order"]:.0f} days ago</div></div>'
          f'<div class="fact"><div class="fact-label">{"Estimated supply" if supply >= 0 else "Estimated runout"}</div><div class="fact-value">{supply_value}</div></div>'
          f'<div class="fact"><div class="fact-label">Open support tickets</div><div class="fact-value">{f["unresolved_tickets"]:.0f}</div></div></div>')
+    render_trajectory(r)
     with st.expander("Why this risk score?"):
         st.write(f"This customer's estimated likelihood of not reordering is **{r.risk.probability:.0%}**. "
                  "It is a signal to investigate, not a certainty or a reason to send a message on its own.")
@@ -238,6 +251,28 @@ def render_evidence(r: CustomerResult) -> None:
             {"Signal": FEATURE_LABELS.get(k, k), "Value": round(v, 2), "Used in risk score": k in MODEL_FEATURES}
             for k, v in f.items()
         ]), hide_index=True, width="stretch")
+
+
+def render_trajectory(r: CustomerResult) -> None:
+    """The risk curve. Direction of travel, which the score alone cannot show."""
+    t = r.trajectory
+    with st.container(border=True, key=f"trend-{r.customer_id}"):
+        html('<div class="row-label">Risk over the last '
+             f'{t.offsets[0]} days</div>'
+             + T.trend_pill(t.state.value, f"{t.relative_momentum:+.0f} pts/100d vs cohort")
+             + T.sparkline(t.curve, t.offsets, t.state.value,
+                           cfg.BAND_LOW_MAX, cfg.BAND_MEDIUM_MAX))
+        if r.drifting:
+            st.caption("This is the shape customers showed before they stopped ordering. "
+                       "It is a reason to look closer, not a reason to send anything.")
+        worsening = t.worsening_signals[:3]
+        if worsening:
+            st.markdown("**What changed**")
+            for d in worsening:
+                st.caption(f"{d.label}: {d.earliest:,.2f} → {d.latest:,.2f}")
+        st.caption("The same model, re-run on what we knew at each earlier date. "
+                   "The oldest points are the least certain: the customer had less "
+                   "history behind them then.")
 
 
 def render_draft(r: CustomerResult) -> None:
@@ -305,6 +340,7 @@ def render_customer(r: CustomerResult) -> None:
               on_click=select, args=(None,))
     st.title(r.customer_id)
     html(T.band_pill(r.risk.band.value, r.risk.probability) + ' &nbsp; '
+         + T.trend_pill(r.trajectory.state.value) + ' &nbsp; '
          + T.pill(review_status(r), "#e9ece7", "#52604f"))
     with st.container(key="customer-detail"):
         left, right = st.columns([1, 1.2], gap="large")
@@ -324,8 +360,10 @@ def render_how() -> None:
     with st.container(border=True):
         for n, title, text in [
             (1, "Spot a change", "Purchase timing, browsing, and email engagement help estimate who may not reorder. Customers with higher risk appear first."),
-            (2, "Check the context", f"Before suggesting outreach, we check consent, a {cfg.COOLDOWN_DAYS}-day break between targeted messages, risk, and remaining product. We also consider support conversations and personal circumstances."),
-            (3, "Choose a helpful response", "Read the recommendation, edit the draft, and mark it reviewed. If waiting is the better choice, the customer stays on hold with a clear explanation."),
+            (2, "Notice the direction",
+             "A score is a snapshot. We re-run it on what we knew at a dozen earlier dates to see whether someone is drifting or steady. Customers whose risk is climbing show up under Drifting before they reach high risk."),
+            (3, "Check the context", f"Before suggesting outreach, we check consent, a {cfg.COOLDOWN_DAYS}-day break between targeted messages, risk, and remaining product. We also consider support conversations and personal circumstances."),
+            (4, "Choose a helpful response", "Read the recommendation, edit the draft, and mark it reviewed. If waiting is the better choice, the customer stays on hold with a clear explanation."),
         ]:
             html(f'<div class="how-step"><div class="how-number">{n}</div>'
                  f'<div><h3>{title}</h3><p>{escape(text)}</p></div></div>')
