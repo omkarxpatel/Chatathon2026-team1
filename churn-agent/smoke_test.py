@@ -11,6 +11,8 @@ Three things it checks, in order of how embarrassing they would be on stage:
   2. NO SEND PATH -- nothing anywhere opens a network or mail connection.
   3. PIPELINE + ARCHETYPES -- the whole thing runs, and the five seeded
      demo customers still produce the outcomes the demo script claims.
+  4. AGENT LOOP -- the agent really investigates before it decides, it
+     always terminates, and it never runs on a customer the gate stopped.
 """
 
 from __future__ import annotations
@@ -215,6 +217,69 @@ unapproved = [
     if r.diagnosis and r.diagnosis.has_message and not r.diagnosis.requires_human_approval
 ]
 check(not unapproved, "every drafted message requires human approval", str(unapproved))
+
+# ==========================================================================
+# 4. The agent loop
+# ==========================================================================
+print("\n[4] Agent loop -- did it investigate, and did it always stop?")
+
+from agent.loop import MAX_STEPS  # noqa: E402
+from agent.schemas import StepKind  # noqa: E402
+from agent.tools import DECIDE_TOOLS, INVESTIGATE_TOOLS  # noqa: E402
+
+DECIDE_NAMES = {t.name for t in DECIDE_TOOLS}
+INVESTIGATE_NAMES = {t.name for t in INVESTIGATE_TOOLS}
+
+# Tokens are only spent on customers we are allowed to contact.
+wasted = [r.customer_id for r in run.results
+          if r.agent_run is not None and not r.policy.eligible]
+check(not wasted, "the agent never ran on a customer the gate stopped", str(wasted))
+
+skipped = [r.customer_id for r in run.results
+           if r.agent_run is None and r.policy.eligible]
+check(not skipped, "every eligible customer got an agent run", str(skipped))
+
+runs = [r.agent_run for r in run.results if r.agent_run is not None]
+check(bool(runs), f"the agent ran on {len(runs)} customers")
+
+# Every run must end by choosing a decision tool, not by falling over or
+# running out of road. A step-limit exit is safe (it yields NO_ACTION) but
+# it would mean the cascade has a hole in it.
+undecided = [a.customer_id for a in runs if a.stop_reason != "decided"]
+check(not undecided, "every run ended by calling a decision tool", str(undecided))
+
+bad_last = [a.customer_id for a in runs
+            if not a.steps or a.steps[-1].kind is not StepKind.DECIDE
+            or a.steps[-1].tool not in DECIDE_NAMES]
+check(not bad_last, "every run's final step is one of the three decision tools",
+      str(bad_last))
+
+# The investigation has to be real: evidence is fetched, not assumed.
+no_evidence = [a.customer_id for a in runs if not a.investigation]
+check(not no_evidence, "every run gathered evidence before deciding", str(no_evidence))
+
+wrong_first = [a.customer_id for a in runs
+               if a.steps[0].tool != "check_product_supply"]
+check(not wrong_first, "every run checked product supply first -- arithmetic before "
+      "interpretation", str(wrong_first))
+
+unknown = sorted({s.tool for a in runs for s in a.steps}
+                 - INVESTIGATE_NAMES - DECIDE_NAMES)
+check(not unknown, "the agent only ever called tools that exist", str(unknown))
+
+over = [a.customer_id for a in runs if a.tool_calls > MAX_STEPS]
+check(not over, f"no run exceeded the {MAX_STEPS}-step limit", str(over))
+
+# A headline is what the reviewer reads when the agent's own sentence is
+# wrong, so every investigate step must have one.
+silent = [f"{a.customer_id}:{s.tool}" for a in runs
+          for s in a.investigation if not s.headline.strip()]
+check(not silent, "every evidence step produced a plain-language finding", str(silent))
+
+stats = run.agent_stats()
+check(stats["tool_calls"] >= 2 * len(runs),
+      f"the agent averaged {stats['avg_steps']} steps per customer",
+      f"only {stats['tool_calls']} calls across {len(runs)} runs")
 
 # ==========================================================================
 print()

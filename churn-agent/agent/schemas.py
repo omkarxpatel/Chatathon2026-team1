@@ -1,17 +1,32 @@
-"""Structured input and output for the agent layer.
+"""The contracts the agent layer speaks in.
 
-Split into its own module so stub_llm.py and diagnose.py can be worked on
-in parallel without fighting over the same file.
+Read this file first. It describes, in order, what the agent is given,
+what it does, and what it hands back:
 
-AgentDiagnosis is the contract. The stub produces it from rules, the real
-model produces it from a tool-use loop, and everything downstream --
-guardrails, pipeline, dashboard -- only ever sees this shape. That is what
-makes swapping the LLM a one-line config change.
+    CustomerBrief   what we put in front of the agent to start with --
+                    the risk score (already computed, not negotiable)
+                    plus what drove it. No evidence: the agent has to go
+                    and get that itself.
+
+    AgentStep       one turn of the loop. The agent said something, called
+                    a tool, and got an answer back. The dashboard renders
+                    these in order, and that list IS the explanation we
+                    show the user.
+
+    AgentDiagnosis  the conclusion: cause, action, and the drafted words.
+
+    AgentRun        the whole episode -- brief in, steps, diagnosis out.
+
+Split into its own module so the two brains (agent/rules_agent.py and
+agent/claude_agent.py) can be worked on in parallel without fighting over
+the same file, and so guardrails/pipeline/dashboard depend on the shapes
+rather than on either implementation.
 """
 
 from __future__ import annotations
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -52,6 +67,11 @@ class Action(str, Enum):
 SILENT_ACTIONS = {Action.NO_ACTION}
 
 
+# --------------------------------------------------------------------------
+# what goes in
+# --------------------------------------------------------------------------
+
+
 class AttributionInput(BaseModel):
     """One model attribution, flattened for the agent."""
 
@@ -62,14 +82,17 @@ class AttributionInput(BaseModel):
     direction: str
 
 
-class DiagnosisRequest(BaseModel):
-    """Everything the agent is allowed to see.
+class CustomerBrief(BaseModel):
+    """The agent's starting position.
 
     Note what is here and what is not. The agent gets the risk number --
-    it does not compute it, and it cannot change it. It gets the model's
-    attributions as evidence. It gets tool output, including the full
-    text of support tickets. It does NOT get the churn label, the latent
-    state, or any other customer's data.
+    it does not compute it and it cannot change it -- plus the model's
+    attributions as a hint about where to look. It does NOT get the
+    evidence. Ticket text, order history and supply arithmetic all arrive
+    through tool calls the agent chooses to make, which is what makes the
+    investigation on screen a real one.
+
+    It never sees the churn label, the latent state, or another customer.
     """
 
     customer_id: str
@@ -77,7 +100,35 @@ class DiagnosisRequest(BaseModel):
     band: str
     top_attributions: list[AttributionInput]
     features: dict[str, float]
-    tool_output: dict
+
+
+# --------------------------------------------------------------------------
+# what happens in between
+# --------------------------------------------------------------------------
+
+
+class StepKind(str, Enum):
+    INVESTIGATE = "investigate"   # pulled evidence
+    DECIDE = "decide"             # committed to an answer and ended the run
+
+
+class AgentStep(BaseModel):
+    """One turn: the agent's stated intent, the tool it reached for, and
+    what came back.
+
+    `headline` is the one-line, plain-language version of the finding.
+    It is written by the tool, not by the agent, so it is true even when
+    the agent misreads its own evidence -- which is exactly when a
+    reviewer needs it most.
+    """
+
+    index: int
+    kind: StepKind
+    thought: str                     # why the agent made this call
+    tool: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    headline: str                    # what came back, in one line
+    observation: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentDiagnosis(BaseModel):
@@ -104,3 +155,33 @@ class AgentDiagnosis(BaseModel):
     @property
     def has_message(self) -> bool:
         return bool(self.message_body)
+
+
+class AgentRun(BaseModel):
+    """One complete episode of the loop, start to finish.
+
+    The dashboard reads this directly: `steps` is the investigation the
+    user watches, `diagnosis` is the recommendation they act on.
+    """
+
+    customer_id: str
+    brain: str                       # which brain ran: "rules" or a Claude model id
+    steps: list[AgentStep]
+    diagnosis: AgentDiagnosis
+    stop_reason: str
+
+    @property
+    def investigation(self) -> list[AgentStep]:
+        return [s for s in self.steps if s.kind == StepKind.INVESTIGATE]
+
+    @property
+    def tool_calls(self) -> int:
+        return len(self.steps)
+
+    def evidence(self) -> dict[str, Any]:
+        """Every observation the agent gathered, keyed by tool name.
+
+        Last call wins, which is what you want when a tool was called
+        twice with different arguments.
+        """
+        return {s.tool: s.observation for s in self.investigation}

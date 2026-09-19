@@ -1,9 +1,14 @@
-"""Message templates for the stub diagnoser.
+"""Message templates for the rule-based brain.
 
-Separate file because this is the part the team will iterate on most and
-it needs no knowledge of the rules engine. The real LLM writes its own
-copy; these are what the stub produces so the demo has something real to
-show on screen.
+Separate file because this is the part the team iterates on most and it
+needs no knowledge of the cascade that chose the action. The real model
+writes its own copy; these are what the rule brain hands to
+propose_outreach so the demo has something real on screen.
+
+`evidence` is whatever the agent actually fetched during its run, keyed
+by tool name. If a template needs something the agent never looked up,
+it falls back rather than reaching around the loop for it -- the copy can
+only use what the investigation found.
 
 House style, enforced here and checked again in guardrails.py:
   - say why you are writing in the first line
@@ -15,56 +20,60 @@ House style, enforced here and checked again in guardrails.py:
 
 from __future__ import annotations
 
-from agent.schemas import Action, DiagnosisRequest
+from typing import Any
+
+from agent.schemas import Action, CustomerBrief
 
 OPT_DOWN = "If you'd rather not get these, you can turn them off in your preferences."
 
 
-def _anchor_product(request: DiagnosisRequest) -> tuple[str, float, int]:
+def _supply(evidence: dict[str, Any]) -> dict[str, Any]:
+    return evidence.get("check_product_supply", {}) or {}
+
+
+def _anchor_product(evidence: dict[str, Any]) -> tuple[str, float, int]:
     """Name, days of supply, and days since the last order's anchor item."""
-    usage = request.tool_output.get("get_product_usage", {})
+    usage = _supply(evidence)
     items = usage.get("last_order_items") or []
+    days_ago = int(usage.get("last_order_days_ago", 0) or 0)
     if not items:
-        return "your usual order", 30.0, int(usage.get("last_order_days_ago", 0) or 0)
+        return "your usual order", 30.0, days_ago
     anchor = max(items, key=lambda i: i.get("days_of_supply", 0))
-    return (
-        anchor.get("name", "your usual order"),
-        float(anchor.get("days_of_supply", 30.0)),
-        int(usage.get("last_order_days_ago", 0) or 0),
-    )
+    return (anchor.get("name", "your usual order"),
+            float(anchor.get("days_of_supply", 30.0)), days_ago)
 
 
-def _damaged_item(request: DiagnosisRequest) -> str | None:
-    """The product from the refunded/cancelled order, if there is one.
+def _damaged_item(evidence: dict[str, Any]) -> str | None:
+    """The product from the refunded or cancelled order, if there is one.
 
     Service recovery has to name the thing that actually went wrong. The
     anchor product from their last good delivery is the wrong answer --
     that is the order that worked.
     """
-    orders = request.tool_output.get("get_order_history", {}).get("orders", [])
+    orders = evidence.get("read_order_history", {}).get("orders", [])
     broken = [o for o in orders if o.get("status") in ("refunded", "cancelled")]
     if not broken:
         return None
     items = sorted(broken, key=lambda o: o["days_ago"])[0].get("items") or []
-    if not items:
-        return None
     # items look like "1x Whey Isolate, 2 lb"
-    return items[0].split("x ", 1)[-1]
+    return items[0].split("x ", 1)[-1] if items else None
 
 
-def draft(action: Action, request: DiagnosisRequest) -> tuple[str | None, str | None]:
+def draft(action: Action | str, brief: CustomerBrief,
+          evidence: dict[str, Any]) -> tuple[str | None, str | None]:
+    action = Action(action) if not isinstance(action, Action) else action
     if action == Action.NO_ACTION:
         return None, None
 
-    name, supply, days_ago = _anchor_product(request)
-    usage = request.tool_output.get("get_product_usage", {})
-    tickets = request.tool_output.get("get_ticket_text", {}).get("tickets", [])
+    name, supply, days_ago = _anchor_product(evidence)
+    usage = _supply(evidence)
+    tickets = evidence.get("read_support_tickets", {}).get("tickets", [])
+    unresolved = [t for t in tickets if not t.get("resolved")]
     out_for = int(usage.get("days_since_ran_out", 0) or 0)
 
     if action == Action.SERVICE_RECOVERY:
-        unresolved = [t for t in tickets if not t.get("resolved")]
         oldest = max((t["days_ago"] for t in unresolved), default=0)
-        broken_item = _damaged_item(request) or name
+        broken_item = _damaged_item(evidence) or name
         return (
             "About your last order, and the reply you didn't get",
             (
@@ -82,14 +91,13 @@ def draft(action: Action, request: DiagnosisRequest) -> tuple[str | None, str | 
         )
 
     if action == Action.HUMAN_ESCALATION:
+        oldest = max((t["days_ago"] for t in unresolved), default=0)
         return (
-            "[INTERNAL] Escalate to a human — do not auto-send",
+            "[INTERNAL] Hand to a teammate — not customer-facing",
             (
-                "Internal note, not customer-facing.\n\n"
-                f"{len([t for t in tickets if not t.get('resolved')])} unresolved tickets, "
-                f"all negative, oldest "
-                f"{max((t['days_ago'] for t in tickets if not t.get('resolved')), default=0)} "
-                f"days old. This has gone past what an automated message should touch.\n\n"
+                f"{len(unresolved)} unresolved tickets, all negative, oldest "
+                f"{oldest} days old. This has gone past what an automated message "
+                f"should touch.\n\n"
                 "Recommend a named person calls or writes personally, resolves the open "
                 "tickets first, and only then considers anything else. No marketing "
                 "message should go to this customer until the tickets are closed."
@@ -97,8 +105,7 @@ def draft(action: Action, request: DiagnosisRequest) -> tuple[str | None, str | 
         )
 
     if action == Action.VALUE_EDUCATION:
-        orders = request.tool_output.get("get_order_history", {})
-        promo_share = orders.get("promo_order_share", 0.0)
+        promo_share = evidence.get("read_order_history", {}).get("promo_order_share", 0.0)
         return (
             "Some maths on cost per serving (no offer attached)",
             (
@@ -162,9 +169,7 @@ def draft(action: Action, request: DiagnosisRequest) -> tuple[str | None, str | 
     # REPLENISHMENT_REMINDER
     ran_out_line = (
         f"by our maths you'd have run out about {out_for} days ago"
-        if out_for > 0
-        else "you're probably close to the end of it"
-    )
+        if out_for > 0 else "you're probably close to the end of it")
     return (
         f"You're probably about out of {name}",
         (

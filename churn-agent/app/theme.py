@@ -113,6 +113,100 @@ def css() -> str:
     border: 1px solid #d4ddd1; border-radius: 8px; background: #fcfdfb; padding: .75rem;
   }}
   [data-testid="stExpander"] {{ background: {SURFACE}; border-radius: 10px; }}
+  .flow {{ display: flex; align-items: stretch; gap: .5rem; flex-wrap: wrap;
+           background: {SURFACE}; border: 1px solid {GRID}; border-radius: 12px;
+           padding: 1rem 1.15rem; margin: .3rem 0 1.4rem; }}
+  .flow-node {{ flex: 1 1 130px; min-width: 120px; }}
+  .flow-node .n {{ font-size: 1.5rem; font-weight: 640; letter-spacing: -.04em;
+                   color: {INK}; font-variant-numeric: tabular-nums; line-height: 1.2; }}
+  .flow-node .k {{ font-size: .73rem; color: {INK_2}; margin-top: .1rem; }}
+  .flow-node .d {{ font-size: .69rem; color: {MUTED}; margin-top: .15rem; line-height: 1.45; }}
+  .flow-node.agent .n {{ color: #2c5a44; }}
+  .flow-node.agent {{ background: #eef3e6; border-radius: 8px;
+                      padding: .15rem .7rem .35rem; margin: -.15rem -.2rem; }}
+  .flow-arrow {{ flex: 0 0 auto; display: grid; place-items: center; color: #b9c4b6;
+                 font-size: .95rem; padding-top: .35rem; }}
+  .timeline {{ margin: .2rem 0 .5rem; }}
+  .tl-step {{ position: relative; padding: 0 0 1.05rem 1.9rem; border-left: 2px solid {GRID};
+              margin-left: .55rem; }}
+  .tl-step:last-child {{ border-left-color: transparent; padding-bottom: .2rem; }}
+  .tl-step::before {{ content: ""; position: absolute; left: -7px; top: .28rem; width: 12px;
+                      height: 12px; border-radius: 50%; background: #c8d4c2;
+                      border: 2px solid {SURFACE}; }}
+  .tl-step.decide::before {{ background: #2c5a44; }}
+  .tl-tool {{ font-size: .68rem; font-weight: 700; letter-spacing: .07em;
+              text-transform: uppercase; color: {MUTED}; }}
+  .tl-thought {{ font-size: .84rem; color: {INK}; margin: .2rem 0 .3rem; line-height: 1.5; }}
+  .tl-finding {{ font-size: .79rem; color: #2c5a44; background: #eef3e6; display: inline-block;
+                 padding: .28rem .55rem; border-radius: 6px; line-height: 1.4; }}
+  .tl-step.decide .tl-finding {{ background: #f2f4ef; color: {INK_2}; }}
+  .toolgrid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+               gap: .6rem; margin: .5rem 0 .3rem; }}
+  .tool {{ border: 1px solid {GRID}; border-radius: 10px; padding: .75rem .85rem;
+           background: {SURFACE}; }}
+  .tool.decide {{ background: #f4f7f0; border-color: #dde6d1; }}
+  .tool-name {{ font-size: .83rem; font-weight: 620; color: {INK}; }}
+  .tool-desc {{ font-size: .73rem; color: {INK_2}; margin-top: .25rem; line-height: 1.5; }}
+  .tool-uses {{ font-size: .68rem; color: {MUTED}; margin-top: .4rem; }}
+  /* ---- flow map: the pipeline as one picture ------------------------ */
+  .map {{ display: grid; margin: .3rem 0 1.2rem; }}
+  .stage {{ display: grid; grid-template-columns: 150px 1fr; gap: 1.35rem;
+            background: {SURFACE}; border: 1px solid {GRID}; border-radius: 14px;
+            padding: 1.3rem 1.45rem; }}
+  .stage.ai {{ background: #f4f7f0; border-color: #dbe4cf; }}
+  .stage.human {{ background: #faf9f3; border-color: #e8e4d7; }}
+  .stage.human .rail {{ border-right-color: #e8e4d7; }}
+  .stage-body {{ min-width: 0; }}
+  .rail {{ border-right: 1px solid {GRID}; padding-right: 1.1rem; }}
+  .stage.ai .rail {{ border-right-color: #dbe4cf; }}
+  .rail .num {{ font-size: .68rem; font-weight: 700; letter-spacing: .14em; color: #aab6a8; }}
+  .rail .nm {{ font-size: 1.02rem; font-weight: 650; letter-spacing: -.035em; color: {INK};
+               line-height: 1.25; margin: .3rem 0 .4rem; }}
+  .rail .tg {{ font-size: .67rem; line-height: 1.5; color: {MUTED}; }}
+  .joint {{ display: grid; justify-items: center; gap: .3rem; padding: .45rem 0; }}
+  .joint .ln {{ width: 2px; height: 13px; background: #cdd7c8; }}
+  .joint .tx {{ font-size: .67rem; font-weight: 650; letter-spacing: .09em;
+                text-transform: uppercase; color: {MUTED}; text-align: center; }}
+  .mcap {{ font-size: .67rem; font-weight: 650; letter-spacing: .09em; text-transform: uppercase;
+           color: {MUTED}; margin: 1.1rem 0 .5rem; line-height: 1.5; }}
+  .stage-body > .mcap:first-child {{ margin-top: 0; }}
+  .mnote {{ font-size: .78rem; color: {INK_2}; line-height: 1.55; }}
+  .srcs {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; }}
+  .src {{ border: 1px solid {GRID}; border-radius: 10px; padding: .7rem .8rem; background: {SURFACE}; }}
+  .src .v {{ font-size: 1.3rem; font-weight: 640; letter-spacing: -.045em; color: {INK};
+             font-variant-numeric: tabular-nums; line-height: 1.25; }}
+  .src .l {{ font-size: .76rem; font-weight: 550; color: {INK_2}; margin-top: .1rem; }}
+  .src .s {{ font-size: .67rem; color: {MUTED}; margin-top: .2rem; line-height: 1.45; }}
+  .mrow {{ display: grid; grid-template-columns: 200px 1fr 44px 44px; align-items: center;
+           gap: .7rem; padding: .23rem 0; }}
+  .mrow .l {{ font-size: .78rem; color: {INK}; line-height: 1.35; }}
+  .mrow .t {{ position: relative; height: 20px; border-radius: 5px; background: #eceff0; }}
+  .mrow .g, .mrow .b {{ position: absolute; left: 0; top: 0; height: 100%; border-radius: 5px; }}
+  .mrow .g {{ background: #dde6d1; }}
+  .mrow .b {{ background: #3f7a5f; }}
+  .mrow .b.alt {{ background: #93ab99; }}
+  .mrow .n {{ font-size: .82rem; font-weight: 620; color: {INK}; text-align: right;
+              font-variant-numeric: tabular-nums; }}
+  .mrow .d {{ font-size: .7rem; color: {MUTED}; text-align: right; font-variant-numeric: tabular-nums; }}
+  .loop {{ border: 1px dashed #c2cfbb; border-radius: 12px; padding: .9rem 1rem; background: {SURFACE}; }}
+  .loop-note {{ font-size: .7rem; color: {MUTED}; margin-top: .6rem; line-height: 1.5; }}
+  .chips {{ display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }}
+  .chip {{ background: #eef3e6; border: 1px solid #dde6d1; border-radius: 999px;
+           padding: .32rem .75rem; font-size: .76rem; font-weight: 600; color: #2c5a44; }}
+  .chip.plain {{ background: {SURFACE}; border-color: {GRID}; color: {INK_2}; font-weight: 550; }}
+  .chip-arrow {{ color: #b9c4b6; font-size: .85rem; }}
+  .terminal {{ border: 1px dashed #cbd5c8; border-radius: 12px; padding: 1rem 1.1rem;
+               background: {PLANE}; text-align: center; margin-top: 1.1rem; }}
+  .terminal .t {{ font-size: .95rem; font-weight: 650; color: {INK}; letter-spacing: -.025em; }}
+  .terminal .s {{ font-size: .73rem; color: {MUTED}; margin-top: .3rem; line-height: 1.5; }}
+  @media (max-width: 850px) {{
+    .stage {{ grid-template-columns: 1fr; gap: .85rem; padding: 1.1rem; }}
+    .rail {{ border-right: 0; border-bottom: 1px solid {GRID}; padding: 0 0 .75rem; }}
+    .rail .nm {{ margin: .15rem 0 .25rem; }}
+    .srcs {{ grid-template-columns: repeat(2, 1fr); }}
+    .mrow {{ grid-template-columns: 116px 1fr 36px 38px; gap: .45rem; }}
+    .mrow .l {{ font-size: .72rem; }}
+  }}
   @container workspace (max-width: 760px) {{
     .st-key-customer-detail [data-testid="stHorizontalBlock"]:has(.recommendation) > [data-testid="stColumn"] {{
       width: 100% !important; flex: 1 1 100% !important; min-width: 0 !important;
@@ -164,3 +258,85 @@ def check(label: str, detail: str, passed: bool) -> str:
     color, mark = (GOOD, "PASS") if passed else (WARNING, "HOLD")
     return (f'<div class="check"><span class="check-mark" style="color:{color}">{mark}</span>'
             f'<div><strong>{escape(label)}</strong><br>{escape(detail)}</div></div>')
+
+
+def flow(nodes: list[tuple[str, str, str]], highlight: int | None = None) -> str:
+    """The pipeline as a strip of numbers: (value, label, detail)."""
+    parts = []
+    for i, (value, label, detail) in enumerate(nodes):
+        if i:
+            parts.append('<div class="flow-arrow">&rarr;</div>')
+        cls = "flow-node agent" if i == highlight else "flow-node"
+        parts.append(f'<div class="{cls}"><div class="n">{escape(value)}</div>'
+                     f'<div class="k">{escape(label)}</div>'
+                     f'<div class="d">{escape(detail)}</div></div>')
+    return '<div class="flow">' + "".join(parts) + "</div>"
+
+
+def step(tool_label: str, thought: str, finding: str, decide: bool = False) -> str:
+    """One turn of the agent loop, for the investigation timeline."""
+    return (f'<div class="tl-step{" decide" if decide else ""}">'
+            f'<div class="tl-tool">{escape(tool_label)}</div>'
+            f'<div class="tl-thought">{escape(thought)}</div>'
+            + (f'<div class="tl-finding">{escape(finding)}</div>' if finding else "")
+            + "</div>")
+
+
+def tool_card(name: str, description: str, uses: str, decide: bool = False) -> str:
+    return (f'<div class="tool{" decide" if decide else ""}">'
+            f'<div class="tool-name">{escape(name)}</div>'
+            f'<div class="tool-desc">{escape(description)}</div>'
+            f'<div class="tool-uses">{escape(uses)}</div></div>')
+
+
+def map_stage(number: str, name: str, tag: str, body: str, kind: str = "") -> str:
+    """One band of the flow map: a labelled rail, and whatever it contains."""
+    return (f'<section class="stage{" " + kind if kind else ""}"><div class="rail">'
+            f'<div class="num">{escape(number)}</div>'
+            f'<div class="nm">{escape(name)}</div>'
+            f'<div class="tg">{escape(tag)}</div></div>'
+            f'<div class="stage-body">{body}</div></section>')
+
+
+def map_joint(label: str) -> str:
+    """What passes from one band of the map to the next."""
+    return ('<div class="joint"><div class="ln"></div>'
+            f'<div class="tx">{escape(label)}</div><div class="ln"></div></div>')
+
+
+def map_source(value: str, label: str, detail: str) -> str:
+    """One kind of raw event going into the pipeline."""
+    return (f'<div class="src"><div class="v">{escape(value)}</div>'
+            f'<div class="l">{escape(label)}</div>'
+            f'<div class="s">{escape(detail)}</div></div>')
+
+
+def map_bar(label: str, value: int, scale: int, note: str = "",
+            ghost: int | None = None, muted: bool = False) -> str:
+    """A labelled bar. `ghost` draws what reached this row, unfilled, behind it,
+    so the gap between the two is the number this step removed."""
+    def width(n: int) -> str:
+        return f"{min(max(n / scale, 0.0), 1.0) * 100:.1f}%" if scale > 0 else "0%"
+
+    behind = "" if ghost is None else f'<div class="g" style="width:{width(ghost)}"></div>'
+    return (f'<div class="mrow"><div class="l">{escape(label)}</div>'
+            f'<div class="t">{behind}<div class="b{" alt" if muted else ""}" '
+            f'style="width:{width(value)}"></div></div>'
+            f'<div class="n">{value:,}</div><div class="d">{escape(note)}</div></div>')
+
+
+def chips(items: list[str], arrow: bool = False, plain: bool = False) -> str:
+    """A row of short labels, optionally read as a sequence."""
+    cls = "chip plain" if plain else "chip"
+    parts = []
+    for i, item in enumerate(items):
+        if i and arrow:
+            parts.append('<span class="chip-arrow">&rarr;</span>')
+        parts.append(f'<span class="{cls}">{escape(item)}</span>')
+    return '<div class="chips">' + "".join(parts) + "</div>"
+
+
+def terminal(title: str, detail: str) -> str:
+    """Where the map stops. Nothing leads out of this one."""
+    return (f'<div class="terminal"><div class="t">{escape(title)}</div>'
+            f'<div class="s">{escape(detail)}</div></div>')

@@ -187,16 +187,20 @@ model does.**
 
 ---
 
-## Step 5 — The agent decides what to do
+## Step 5 — The agent investigates and decides
 
-`agent/stub_llm.py` (rules) or `agent/diagnose.py` (real Claude). Both return the
-same `AgentDiagnosis` object, so nothing downstream can tell them apart.
+`agent/loop.py` runs the loop; `agent/rules_agent.py` (rules) or
+`agent/claude_agent.py` (real Claude) answers "what should I call next?". Both
+drive the same loop over the same tools and return the same `AgentRun`, so
+nothing downstream can tell them apart.
 
 The agent gets the score and the attributions **as input**. It never recomputes
-them. Its job is the part a regression can't do: read the support tickets, work
-out *why*, pick an action, write the words.
+them. It does *not* get the evidence — it fetches that itself, one tool call at
+a time, and the record of those calls is what the dashboard shows the reviewer.
+Its job is the part a regression can't do: read the support tickets, work out
+*why*, pick an action, write the words.
 
-It checks in this order:
+The rule brain reaches for tools in this order:
 
 1. **Still supplied?** → no action.
 2. **Did we break something?** Unresolved negative tickets → service recovery.
@@ -255,7 +259,10 @@ The important ones:
 | What counts as a feature | `features/extract.py` |
 | The model itself | `scoring/logistic.py` (implement `RiskScorer` to add a new one) |
 | Who gets suppressed | `agent/policy.py` |
-| How causes are diagnosed | `agent/stub_llm.py` |
+| What the agent can look up or do | `agent/tools.py` |
+| How the loop is bounded and what happens when it fails | `agent/loop.py` |
+| How the demo brain decides what to check next | `agent/rules_agent.py` |
+| The prompt and tool loop for the real model | `agent/claude_agent.py` |
 | The wording of messages | `agent/copywriter.py` |
 | What the agent isn't allowed to do | `agent/guardrails.py` |
 
