@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run the whole pipeline headlessly and print a summary.
 
-    python run_pipeline.py              # cohort summary
-    python run_pipeline.py --show CUST-0001   # full trace for one customer
+    python run_pipeline.py                    # cohort summary
+    python run_pipeline.py --show CUST-0001   # the agent's full run for one customer
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 
 import config as cfg
-from agent.schemas import Action
 from pipeline import run_cohort
 
 
@@ -38,17 +37,22 @@ def show_customer(run, customer_id: str) -> None:
     for c in result.policy.checks:
         print(f"      [{'PASS' if c.passed else 'STOP'}] {c.name}: {c.detail}")
 
-    if result.diagnosis is None:
+    if result.agent_run is None:
         print("\n[4] AGENT  not run -- the gate stopped this customer.")
         print(f"\nOUTCOME    {result.outcome_label}")
         return
 
-    d = result.diagnosis
-    print(f"\n[4] AGENT  cause={d.cause.value} ({d.cause_confidence:.0%})  "
-          f"via {d.diagnoser}")
-    for i, step in enumerate(d.reasoning_trace, 1):
-        print(f"      {i}. {step}")
-    print(f"\n    action: {d.action.value}")
+    agent = result.agent_run
+    print(f"\n[4] AGENT  {agent.brain}  --  {agent.tool_calls} steps, "
+          f"stopped because it {agent.stop_reason}")
+    for step in agent.steps:
+        print(f"\n      {step.index}. {step.thought}")
+        print(f"         -> {step.tool}({', '.join(f'{k}={v!r}' for k, v in step.arguments.items())[:60]})")
+        print(f"         =  {step.headline}")
+
+    d = agent.diagnosis
+    print(f"\n    cause:  {d.cause.value} ({d.cause_confidence:.0%} confidence)")
+    print(f"    action: {d.action.value}")
     print(f"    why:    {d.action_rationale}")
 
     if d.has_message:
@@ -66,7 +70,7 @@ def show_customer(run, customer_id: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--show", help="print the full trace for one customer id")
+    ap.add_argument("--show", help="print the agent's full run for one customer id")
     args = ap.parse_args()
 
     run = run_cohort()
@@ -76,7 +80,12 @@ def main() -> None:
         return
 
     print(f"\n{run.fit.summary()}")
-    print(f"diagnoser: {run.diagnoser_name}  |  as of {run.as_of}\n")
+    stats = run.agent_stats()
+    print(f"agent: {run.agent_name}  |  as of {run.as_of}")
+    print(f"       {stats['customers_investigated']} customers investigated, "
+          f"{stats['tool_calls']} tool calls ({stats['avg_steps']} per customer), "
+          f"{stats['drafted']} drafts, {stats['left_alone']} left alone, "
+          f"{stats['blocked']} blocked by guardrails\n")
 
     table = run.table()
     print(table.head(15).to_string(index=False))
@@ -87,6 +96,9 @@ def main() -> None:
     print("\nactions:")
     for name, count in table["action"].value_counts().items():
         print(f"   {count:>4}  {name}")
+    print("\ntools the agent reached for:")
+    for row in run.tool_usage():
+        print(f"   {row['calls']:>4}  {row['tool']}")
 
     print("\ntrend (direction of travel, independent of the gate):")
     for name, count in table["trend"].value_counts().items():
@@ -108,7 +120,7 @@ def main() -> None:
     print("\nseeded demo archetypes:")
     seeded = table[table["archetype"] != ""]
     print(seeded[["customer_id", "archetype", "risk", "band", "trend",
-                  "outcome", "cause", "action"]].to_string(index=False))
+                  "outcome", "cause", "action", "steps"]].to_string(index=False))
 
 
 if __name__ == "__main__":

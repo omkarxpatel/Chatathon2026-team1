@@ -113,8 +113,10 @@ CALIBRATE = False
 # --------------------------------------------------------------------------
 # Agent layer
 # --------------------------------------------------------------------------
-# False  -> agent/stub_llm.py   (deterministic, no API key, no network)
-# True   -> agent/diagnose.py AnthropicDiagnoser (drop-in, same interface)
+# Which brain drives the agent loop in agent/loop.py. Both call the same
+# tools, produce the same AgentRun, and render identically in the UI.
+# False  -> agent/rules_agent.py   (deterministic, no API key, no network)
+# True   -> agent/claude_agent.py  (a real Claude tool-use loop)
 USE_REAL_LLM = False
 LLM_MODEL = "claude-opus-5"
 LLM_MAX_TOKENS = 2000

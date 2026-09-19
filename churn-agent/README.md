@@ -1,6 +1,12 @@
 # Cadence — DTC sports nutrition
 
-Spot churn, take a helpful first action. Built for Chatathon 2026, Klaviyo track.
+A retention agent. A model ranks who is likely to stop buying; the agent then
+investigates the ones worth investigating — reading their support tickets,
+their orders, the arithmetic on whether they have actually run out — works out
+*why*, and either drafts a response or says plainly that we should leave them
+alone. A person reviews everything.
+
+Built for Chatathon 2026, Klaviyo track.
 
 Everything here runs on **synthetic data** with **no API key** and **no network**.
 There is no send path anywhere in this project.
@@ -14,16 +20,16 @@ python -m venv .venv && source .venv/bin/activate   # python 3.12 recommended
 pip install -r requirements.txt
 
 python run_generate.py        # build the synthetic cohort -> data/out/
-python smoke_test.py          # verify the pipeline + the five demo cases
-python -m unittest test_dashboard -v  # verify the review workflow
+python smoke_test.py          # pipeline, the five demo cases, the agent loop
+python -m unittest test_agent_loop test_dashboard -v   # loop edge cases + review workflow
 streamlit run app/dashboard.py
 ```
 
 Headless, if you want to see a trace without the UI:
 
 ```bash
-python run_pipeline.py                      # cohort summary + the drifting list
-python run_pipeline.py --show CUST-0001     # full trace, risk curve included
+python run_pipeline.py                      # cohort summary, tool usage, drifting list
+python run_pipeline.py --show CUST-0001     # the agent's whole run, risk curve included
 ```
 
 ---
@@ -31,8 +37,16 @@ python run_pipeline.py --show CUST-0001     # full trace, risk curve included
 ## Using the workspace
 
 The dashboard opens on **Review queue**, with suggested responses ordered by
-risk. Each customer shows their risk, a plain-language reason, and a recommended
-next step. Search by customer ID, reason, or action, or filter by risk level.
+risk. The strip across the top is the agent's last run as four numbers —
+customers scanned, customers it looked at closely, tool calls it chose to make,
+drafts waiting for you. Each row shows risk, a plain-language reason, and a
+recommended next step. Search by customer ID, reason, or action, or filter by
+risk level.
+
+Opening a customer leads with the recommendation, then **How the agent worked
+this out**: every tool call it made, the sentence it wrote before making it, and
+the finding in plain language. Raw tool output is one expander down. That
+timeline is the explanation — not a summary of one.
 
 - **Needs review** contains suggested responses that still need a person to review
   them. Open one to see context alongside an editable draft. Save your edits, or
@@ -45,10 +59,14 @@ next step. Search by customer ID, reason, or action, or filter by risk level.
   a labeled demo draft to keep a copy, reopen it for editing, or move to the next
   customer. Marking reviewed never sends a message.
 
-**All customers** includes the entire cohort. **How it works** explains the flow,
-links to the five demo cases, and keeps model evaluation available on demand.
-Customer details include expandable risk explanations, contact checks,
-recommendation reasoning, support history, and recorded signals.
+**All customers** includes the entire cohort. **Flow map** is the picture with no
+prose to read: five bands from raw events, through the deterministic score and
+gate, through the tool calls the agent chose to make, to the person at the end.
+Every number on it is read off the loaded run. **How it works** walks the same
+flow in words, lists every tool the agent can reach for and how often it used
+each one, links to the five demo cases, and keeps model evaluation behind a
+disclosure. Customer details include expandable risk explanations, contact
+checks, safety checks on the draft, support history, and recorded signals.
 
 Drafts and review progress live only in Streamlit session state; reloading or
 closing the browser can reset them. Edited copy is rechecked for tone, length,
@@ -57,24 +75,16 @@ downloaded. There is no send path, shared review database, or live integration.
 
 ---
 
-## The one architectural rule
-
-Two layers, hard boundary, and the boundary is visible in `pipeline.py`.
+## The flow, end to end
 
 ```
-  events  ──▶  features/extract.py  ──▶  scoring/logistic.py  ──▶  agent/policy.py
-                                              │                          │
-                                              ├──▶ features/trajectory.py
-                                              │    the SAME model, rescored
-                                              │    at 13 earlier dates.
-              DETERMINISTIC LAYER ────────────┴──────────────────────────┘
-              pure python + sklearn. no LLM. produces a calibrated
-              probability and exact per-feature attributions.
-                                                                         │
-              AGENT LAYER ───────────────────────────────────────────────┤
-              reads unstructured signals, diagnoses WHY, picks an        │
-              action, drafts copy. never computes the risk number.       ▼
-                                          agent/diagnose.py ──▶ agent/guardrails.py
+  raw events ──▶ features ──▶ risk model ──▶ policy gate ──▶ AGENT LOOP ──▶ guardrails ──▶ you
+  orders          29 signals   logistic       4 cheap rules   Claude or       9 checks      review
+  sessions        per person   regression     run first       the rule        on the        and edit
+  emails                           │                          brain, with     output
+  tickets                          │  ── DETERMINISTIC ──     tools
+                                   └──▶ trajectory: the same model rescored at 13
+                                        earlier dates. which direction, not how bad.
 ```
 
 **The LLM never computes the risk number.** It receives the score and the
@@ -85,6 +95,83 @@ The split is not arbitrary. Structured behaviour goes to the model, which is
 good at it. Unstructured text — *"I've torn my rotator cuff and I'm out of the
 gym for three months"* — goes to the LLM, which is the only layer that can read
 it. Neither layer is asked to do the other's job.
+
+The whole thing is visible in order in `pipeline.py`.
+
+---
+
+## The agent loop
+
+`agent/loop.py` is twenty lines and it is the agentic part:
+
+```
+  brief in  ─▶  [ think ─▶ call a tool ─▶ read the result ] × N  ─▶  decide
+```
+
+The brief is the score, the band, and the model's top attributions. **No
+evidence.** The agent has to go and get that itself, which is what makes the
+investigation on screen a real one rather than a re-narration of a prefetched
+blob — and what lets it stop after one tool call when that call already answers
+the question.
+
+```
+$ python run_pipeline.py --show CUST-0001
+
+[3] AGENT  rules  --  5 steps, stopped because it decided
+
+      1. Before reading anything into the gap, work out whether they have actually run out.
+         -> check_product_supply()
+         =  Ran out about 20 days ago (Creatine Monohydrate, 350 g)
+
+      2. They are out of product. Read their support history to see whether we
+         caused this, or whether they told us something about themselves.
+         -> read_support_tickets()
+         =  2 support tickets, 2 still open — oldest is 85 days old
+
+      3. An unanswered complaint about a damaged shipment, 85 days old: "Second tub
+         in a row arrived with the seal broken..." — pull the orders so the reply
+         names the one that went wrong.
+         -> read_order_history()
+         =  7 orders, last one 74 days ago — 1 refunded or cancelled
+
+      4. Before writing anything, confirm we are still allowed to contact them.
+         -> check_contact_policy()
+         =  No targeted outreach ever sent
+
+      5. They did not drift away — we broke something and then did not answer.
+         -> propose_outreach(cause='service_failure', action='service_recovery', ...)
+```
+
+### The tools
+
+Two kinds, and the split is the design. Five **investigate** tools read one
+customer; three **decide** tools end the run. The agent cannot dribble out a
+conclusion in prose — it has to commit to a structured tool call the guardrails
+can then check.
+
+| | Tool | What it does |
+|---|---|---|
+| investigate | `check_product_supply` | servings ÷ servings-per-day. Call it first: a long gap on a 76-day tub is arithmetic, not disengagement |
+| investigate | `read_support_tickets` | full text, unsummarised. The signal the whole agent layer exists to read |
+| investigate | `read_order_history` | what, when, how much, and whether a promo was used |
+| investigate | `read_engagement` | clicks and sessions. Opens are reported and flagged as MPP-inflated |
+| investigate | `check_contact_policy` | opt-out status and cooldown. Duplicates the gate on purpose |
+| **decide** | `propose_outreach` | an action that fits the cause, plus the drafted words |
+| **decide** | `recommend_no_contact` | a first-class outcome, not a failure |
+| **decide** | `escalate_to_human` | past what a template should touch |
+
+Every tool is pre-scoped to the customer under review. There is no argument
+anywhere that lets the agent ask about somebody else.
+
+### Three safety properties, enforced by the loop, not trusted to the brain
+
+- **bounded** — `MAX_STEPS` tool calls, then it stops
+- **error-tolerant** — a bad tool call is an error handed back, not a crash
+- **fail-quiet** — running out of steps produces `NO_ACTION`, never a guess
+
+`smoke_test.py` asserts all of this on every run: that the agent never ran on a
+customer the gate stopped, that every run ended by calling a decision tool, that
+every run fetched evidence first, and that nothing exceeded the step limit.
 
 ---
 
@@ -292,19 +379,26 @@ USE_REAL_LLM = True
 LLM_MODEL = "claude-opus-5"
 ```
 
-`agent/stub_llm.py` (rules, deterministic) and `agent/diagnose.py`
-`AnthropicDiagnoser` (Claude via `client.messages.parse()` with a Pydantic
-schema) both return `AgentDiagnosis`. The gate, the guardrails, and the
-dashboard cannot tell them apart.
+Two brains, one protocol (`Brain` in `agent/loop.py` — `reset`, `next_move`,
+`observe`, `observe_error`):
 
-Both paths see byte-identical evidence: tool output is prefetched by
-`build_request()` rather than fetched through a live tool-call loop, which is
-what makes the stub a fair stand-in rather than a mock. `TOOL_SCHEMAS` in
-`agent/tools.py` is already in Anthropic tool-use format if you want a real loop
-later.
+| | |
+|---|---|
+| `agent/rules_agent.py` | `RuleBrain`. Deterministic cascade, no API key, no network. |
+| `agent/claude_agent.py` | `ClaudeBrain`. A real Anthropic tool-use loop over `TOOL_SCHEMAS`. |
+
+Both drive the *same* loop over the *same* tools and produce the same
+`AgentRun`, so the gate, the guardrails, the CLI and the dashboard cannot tell
+them apart — and neither can the demo. That is what makes the rule brain a fair
+stand-in rather than a mock: it is not a different code path, it is a different
+answer to "what should I call next?".
+
+`ClaudeBrain` keeps a message list, appends each `tool_result`, and is reset per
+customer — carrying one customer's tickets into the next customer's reasoning
+would be a privacy bug, not a feature.
 
 Needs `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, or an `ant auth login`
-profile. **The stub is the default and the demo does not need a key.**
+profile. **The rule brain is the default and the demo does not need a key.**
 
 ---
 
@@ -338,11 +432,12 @@ Written so the team can split up. Files on different rows do not collide.
 | **Trajectory** | `features/trajectory.py` | `extract`, `store` |
 | **Scoring** | `scoring/base.py`, `scoring/logistic.py` | `features` |
 | **Policy gate** | `agent/policy.py` | `scoring`, `store` |
-| **Tools** | `agent/tools.py` | `store`, `policy` |
 | **Agent contracts** | `agent/schemas.py` | nothing |
-| **Stub brain** | `agent/stub_llm.py` | `schemas`, `copywriter` |
+| **Tools** | `agent/tools.py` | `store`, `policy`, `schemas` |
+| **The loop** | `agent/loop.py` | `tools`, `schemas` |
+| **Rule brain** | `agent/rules_agent.py` | `loop`, `copywriter` |
+| **Claude brain** | `agent/claude_agent.py` | `loop`, `tools` |
 | **Message copy** | `agent/copywriter.py` | `schemas` — *safe to iterate freely* |
-| **Real LLM** | `agent/diagnose.py` | `schemas`, `tools` |
 | **Guardrails** | `agent/guardrails.py` | `schemas` |
 | **Orchestration** | `pipeline.py` | everything |
 | **Design tokens** | `app/theme.py` | nothing — *safe to restyle freely* |
@@ -356,13 +451,14 @@ carries the theme, which matters more than it sounds: at Streamlit's default
 `primaryColor` every filter chip renders bright red, which reads as *error* on
 what is only a filter.
 
-Five files beyond the original spec, each for a stated reason:
+Six files beyond the original spec, each for a stated reason:
 `data/store.py` (feature extraction stays pure — the store owns I/O and enforces
 the temporal cutoff), `data/text_bank.py` and `agent/copywriter.py` (the two
 files people iterate on most, isolated so they need no knowledge of the logic
-around them), and `agent/schemas.py` (so `stub_llm.py` and `diagnose.py` can be
-edited in parallel without conflicting), and `app/theme.py` (colour and
-spacing tokens, so restyling never means touching layout logic).
+around them), `agent/schemas.py` (so the two brains can be edited in parallel
+without conflicting), `agent/loop.py` (the loop is the thing both brains share,
+so it cannot live inside either), and `app/theme.py` (colour and spacing tokens,
+so restyling never means touching layout logic).
 
 ### Interface hierarchy
 
@@ -389,8 +485,10 @@ with the next action. The layout adapts to the available content width.
   proper scoring rule so it is well-calibrated by construction, and Brier 0.182
   is consistent with that — but there is no reliability diagram.
   `config.CALIBRATE` is a stub; isotonic would need more than 200 points.
-- **The stub is rules, not intelligence.** It is faithful about *shape*, not
-  about judgement. Flip `USE_REAL_LLM` to see the difference.
+- **The default brain is rules, not intelligence.** It runs a real loop and
+  makes real tool calls, but the judgement behind "what should I check next?"
+  is a cascade, not a model. It is faithful about *shape*, not about judgement.
+  Flip `USE_REAL_LLM` to see the difference.
 - **The trajectory is correlated with the score** (r ≈ 0.63–0.69), not
   independent evidence — it is a second read on the same signals. It finds
   nothing in the LOW band; the lift is real in MEDIUM and marginal in HIGH.
@@ -400,6 +498,8 @@ with the next action. The layout adapts to the available content width.
 ## Deliberately not built
 
 No uplift modelling. No BTYD/survival. No gradient boosting. No auth, no
-database, no Docker, no deployment config. Pipeline checks live in `smoke_test.py`
-and review interaction tests in `test_dashboard.py`. No
-real API integration on the default path. **No send functionality of any kind.**
+database, no Docker, no deployment config. No multi-agent anything, no memory
+across customers, and no planner — one loop, eight tools, a step limit. Pipeline
+and loop checks live in `smoke_test.py`, loop edge cases in `test_agent_loop.py`,
+and review interaction tests in `test_dashboard.py`. No real API integration on
+the default path. **No send functionality of any kind.**

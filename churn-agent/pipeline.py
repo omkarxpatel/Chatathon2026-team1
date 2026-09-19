@@ -1,8 +1,21 @@
 """Wires the layers together. Signals -> risk -> gate -> agent -> guardrails.
 
-The whole architecture is visible in run_cohort() below, in order, with
-the layer boundary marked. If you read one file in this project, read
-this one.
+The whole flow is visible in run_cohort() below, in order, with the layer
+boundary marked. If you read one file in this project, read this one.
+
+    1. RAW EVENTS      orders, sessions, emails, support tickets
+    2. FEATURES        29 signals per customer, computed strictly before
+                       the cutoff date
+    3. RISK MODEL      logistic regression -> a calibrated probability
+                       and exact per-feature attributions. No LLM.
+    4. POLICY GATE     deterministic rules. Customers who fail never
+                       reach the agent, so no tokens are spent on people
+                       we are not allowed to contact.
+    5. AGENT           reads the unstructured signals through tools,
+                       works out WHY, and commits to a decision. Never
+                       computes the risk number.
+    6. GUARDRAILS      check the agent's output. Unsure means send nothing.
+    7. HUMAN           reviews every draft. There is no send path.
 
 Deliberately not a class with state. The dashboard calls run_cohort()
 once and caches the result; the CLI calls it and prints. Nothing here
@@ -18,11 +31,11 @@ import pandas as pd
 
 import config as cfg
 from agent import guardrails
-from agent.diagnose import build_request, get_diagnoser
+from agent.loop import build_brief, get_brain, run_agent
 from agent.policy import GateOutcome, PolicyDecision, evaluate as evaluate_policy
-from agent.schemas import Action, AgentDiagnosis
+from agent.schemas import Action, AgentDiagnosis, AgentRun
 from data.store import EventStore
-from features.extract import FEATURE_NAMES, extract_frame
+from features.extract import extract_frame
 from features.trajectory import Trajectory, TrajectoryState
 from features.trajectory import build as build_trajectories
 from scoring.base import FitReport, RiskResult
@@ -39,9 +52,13 @@ class CustomerResult:
     risk: RiskResult
     trajectory: Trajectory                     # direction of travel, not level
     policy: PolicyDecision
-    diagnosis: AgentDiagnosis | None          # None when the gate stopped it
+    agent_run: AgentRun | None                 # None when the gate stopped it
     guardrails: guardrails.GuardrailReport | None
     churn_label: bool                          # ground truth, for evaluation only
+
+    @property
+    def diagnosis(self) -> AgentDiagnosis | None:
+        return self.agent_run.diagnosis if self.agent_run else None
 
     @property
     def final_action(self) -> Action:
@@ -93,10 +110,39 @@ class CohortRun:
     results: list[CustomerResult]
     fit: FitReport
     as_of: date
-    diagnoser_name: str
+    agent_name: str
 
     def by_id(self) -> dict[str, CustomerResult]:
         return {r.customer_id: r for r in self.results}
+
+    # ------------------------------------------------------------------
+    def investigated(self) -> list[CustomerResult]:
+        return [r for r in self.results if r.agent_run is not None]
+
+    def agent_stats(self) -> dict[str, int | float]:
+        """What the agent actually did, for the run summary on screen."""
+        runs = [r.agent_run for r in self.investigated()]
+        calls = sum(run.tool_calls for run in runs)
+        return {
+            "customers_investigated": len(runs),
+            "tool_calls": calls,
+            "avg_steps": round(calls / len(runs), 1) if runs else 0.0,
+            "drafted": sum(1 for r in self.results
+                           if r.diagnosis and r.diagnosis.has_message),
+            "left_alone": sum(1 for r in self.investigated()
+                              if r.final_action == Action.NO_ACTION),
+            "blocked": sum(1 for r in self.results
+                           if r.guardrails and r.guardrails.downgraded),
+        }
+
+    def tool_usage(self) -> list[dict]:
+        """How often the agent reached for each tool, most-used first."""
+        counts: dict[str, int] = {}
+        for r in self.investigated():
+            for step in r.agent_run.steps:
+                counts[step.tool] = counts.get(step.tool, 0) + 1
+        return [{"tool": name, "calls": n}
+                for name, n in sorted(counts.items(), key=lambda kv: -kv[1])]
 
     def funnel(self) -> list[dict]:
         """How the cohort narrows, stage by stage.
@@ -125,7 +171,8 @@ class CohortRun:
             first_fail.append(idx)
 
         total = len(self.results)
-        stages = [{"stage": "Scored", "n": total, "dropped": 0, "note": "whole cohort"}]
+        stages = [{"stage": "Scored by the risk model", "n": total, "dropped": 0,
+                   "note": "whole cohort"}]
         for i, name in enumerate(order):
             remaining = sum(1 for f in first_fail if f > i)
             previous = stages[-1]["n"]
@@ -137,7 +184,7 @@ class CohortRun:
 
         acted = sum(1 for r in self.results if r.final_action != Action.NO_ACTION)
         stages.append({
-            "stage": "Agent chose to act", "n": acted,
+            "stage": "Agent recommended a response", "n": acted,
             "dropped": stages[-1]["n"] - acted,
             "note": f"{stages[-1]['n'] - acted} left alone by the agent",
         })
@@ -154,6 +201,7 @@ class CohortRun:
                 "outcome": r.outcome_label,
                 "cause": r.diagnosis.cause.value if r.diagnosis else "",
                 "action": r.final_action.value,
+                "steps": r.agent_run.tool_calls if r.agent_run else 0,
                 "days_supply_left": round(r.features["days_of_supply_remaining"]),
                 "gap_vs_median": round(r.features["reorder_gap_ratio"], 2),
                 "trend": r.trajectory.state.value,
@@ -195,16 +243,17 @@ def run_cohort(store: EventStore | None = None, as_of: date | None = None) -> Co
     # ======================================================================
     # LAYER 2 -- AGENT. Only customers that cleared the gate get here, so
     # we never spend a token on someone we are not allowed to contact.
+    # Each one gets its own investigation: the agent chooses which tools
+    # to call and stops as soon as the evidence answers the question.
     # ======================================================================
-    diagnoser = get_diagnoser()
+    brain = get_brain()
 
     results: list[CustomerResult] = []
     for cid in X.index:
-        diagnosis = report = None
+        run = report = None
         if policies[cid].eligible:
-            request = build_request(risks[cid], features[cid], events[cid])
-            diagnosis = diagnoser.diagnose(request)
-            report = guardrails.review(diagnosis, features[cid], events[cid])
+            run = run_agent(brain, build_brief(risks[cid], features[cid]), events[cid])
+            report = guardrails.review(run.diagnosis, features[cid], events[cid])
 
         results.append(CustomerResult(
             customer_id=str(cid),
@@ -213,11 +262,11 @@ def run_cohort(store: EventStore | None = None, as_of: date | None = None) -> Co
             risk=risks[cid],
             trajectory=trajectories[str(cid)],
             policy=policies[cid],
-            diagnosis=diagnosis,
+            agent_run=run,
             guardrails=report,
             churn_label=store.label(str(cid)),
         ))
 
     results.sort(key=lambda r: -r.risk.probability)
     return CohortRun(results=results, fit=fit, as_of=as_of,
-                     diagnoser_name=getattr(diagnoser, "name", "unknown"))
+                     agent_name=getattr(brain, "name", "unknown"))

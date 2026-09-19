@@ -34,12 +34,14 @@ say 136.
 
 *[Review queue, nothing selected. No introductions — open cold.]*
 
-Customers buy on a rhythm — a subscription, a consumable, any reorder cycle.
-Then they stop. Nobody complains, nobody unsubscribes; the next order just never
-comes. You find out a quarter later.
+Every repeat-purchase business has the same blind spot. Customers buy on a
+rhythm — a subscription, a consumable, any reorder cycle — then they stop.
+Nobody complains, nobody unsubscribes; the next order just never comes. You find
+out a quarter later.
 
-The obvious build ranks everyone by risk and emails the top of the list. That's
-what we deliberately did not build.
+So we built an agent for it — who went quiet, why, and whether to reach out at
+all. The obvious build ranks everyone by risk and emails the top. That's what we
+deliberately did not build.
 
 *[Point at the review queue count.]*
 
@@ -49,6 +51,11 @@ left alone on purpose.
 > **Most of the customers our model flags should not be contacted. Not
 > contacting someone is the default here, not the failure case.**
 
+*[Dataset, one breath, then move — don't let it deflate the line above.]*
+
+Those two hundred are synthetic — generated with AI around a sports nutrition
+brand, protein powder on a reorder cycle. Nothing in the pipeline assumes that.
+
 So — what earns a message? That starts with how the number gets made.
 
 ---
@@ -57,15 +64,17 @@ So — what earns a message? That starts with how the number gets made.
 
 *[Still the cohort view. No clicking. Model stats visible.]*
 
-Two layers, and the boundary between them is hard. None of this assumes what's
-being sold — swap the catalogue and the split holds.
+Two layers, and the boundary between them is hard. Anything countable goes to
+the deterministic layer; anything you have to *read* goes to the agent. Swap the
+catalogue and that split still holds.
 
-The deterministic layer does the arithmetic. Logistic regression, six features,
-producing the probability and exact per-feature attributions — coefficient times
-standardised value, not a SHAP approximation.
+The deterministic layer does the arithmetic. Logistic regression, six
+behavioural features, producing the probability and exact per-feature
+attributions — coefficient times standardised value, not a SHAP approximation.
 
-The agent layer reads what a regression can't — a support ticket is unstructured
-text. It diagnoses *why*, and picks an action. Neither layer does the other's
+The agent layer starts where the arithmetic stops. A support ticket is
+unstructured text — no regression reads it. The agent does: it diagnoses *why*
+this customer went quiet, and picks the action. Neither layer does the other's
 job.
 
 > **The LLM never computes the risk number. It receives the score and the
@@ -84,8 +93,6 @@ Let's watch it run on someone it decided to contact.
 
 *[Open demo case 1. Four tabs: Signals → Policy gate → Agent → Guardrails.
 This is the only case where all four get walked.]*
-
-Our data is a sports nutrition brand — two hundred synthetic customers.
 
 CUST-0001. Sixty-four percent, medium risk.
 
